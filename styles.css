@@ -144,3 +144,52 @@
 }
 .pp-confirm-count { color: var(--text-muted); font-size: var(--font-ui-smaller); text-align: right; }
 .pp-confirm-count.is-over, .pp-confirm-warn { color: var(--text-error); }
+
+/* Draft, schedule or now, and the time for a schedule. */
+.pp-confirm .pp-mode { margin: var(--size-4-3) 0 var(--size-4-2); flex-wrap: wrap; }
+.pp-confirm button.pp-chip {
+  height: auto;
+  padding: 4px 12px;
+  border: none;
+  border-radius: calc(var(--radius-m) - 2px);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  cursor: pointer;
+}
+.pp-confirm button.pp-chip.is-on {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0, 0, 0, 0.12));
+}
+.pp-when input { max-width: 100%; }
+.pp-hidden { display: none; }
+
+/* Settings: a channel's platforms as labelled chips that wrap. */
+.pp-settings-platforms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 0 var(--size-4-3);
+}
+.pp-settings-platforms button.pp-settings-platform {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background: var(--background-primary);
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+.pp-settings-platforms button.pp-settings-platform.is-on {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.pp-settings-platforms button.pp-settings-platform:focus-visible { box-shadow: 0 0 0 2px var(--background-modifier-border-focus); }

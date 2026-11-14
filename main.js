@@ -4,12 +4,12 @@
    choices are kept in the note's properties (channel, platforms), so anything that posts can read them.
    Picking another channel moves the note to that channel's folder, at the same status, and drops the
    platforms that channel does not have.
-   Optional publishing: with the user's own account details in settings, a post can go to Bluesky, Mastodon,
-   or a Ghost or WordPress blog (as a draft). Only when the user presses the button and then confirms the
-   exact text; never on its own. Where it went is written back into the note.
+   Optional sending through Zernio (zernio.com): with a Zernio API key in the device's keychain, a post goes to the
+   social accounts connected there, as a draft, scheduled, or at once. Only when the user presses the button and
+   confirms the exact text; never on its own. The Zernio post and its status are written back into the note.
    No Node APIs, so it runs on phones and tablets too. */
 "use strict";
-const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFile, MarkdownView, normalizePath, requestUrl } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFile, MarkdownView, normalizePath, requestUrl, SecretComponent } = require("obsidian");
 
 const HEADER_CLS = "pp-post-header";
 
@@ -23,7 +23,6 @@ const ICONS = {
   "x": "M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z",
   "threads": "M12.186 24h-.007c-3.581-.024-6.334-1.205-8.184-3.509C2.35 18.44 1.5 15.586 1.472 12.01v-.017c.03-3.579.879-6.43 2.525-8.482C5.845 1.205 8.6.024 12.18 0h.014c2.746.02 5.043.725 6.826 2.098 1.677 1.29 2.858 3.13 3.509 5.467l-2.04.569c-1.104-3.96-3.898-5.984-8.304-6.015-2.91.022-5.11.936-6.54 2.717C4.307 6.504 3.616 8.914 3.589 12c.027 3.086.718 5.496 2.057 7.164 1.43 1.783 3.631 2.698 6.54 2.717 2.623-.02 4.358-.631 5.8-2.045 1.647-1.613 1.618-3.593 1.09-4.798-.31-.71-.873-1.3-1.634-1.75-.192 1.352-.622 2.446-1.284 3.272-.886 1.102-2.14 1.704-3.73 1.79-1.202.065-2.361-.218-3.259-.801-1.063-.689-1.685-1.74-1.752-2.964-.065-1.19.408-2.285 1.33-3.082.88-.76 2.119-1.207 3.583-1.291a13.853 13.853 0 0 1 3.02.142c-.126-.742-.375-1.332-.75-1.757-.513-.586-1.308-.883-2.359-.89h-.029c-.844 0-1.992.232-2.721 1.32L7.734 7.847c.98-1.454 2.568-2.256 4.478-2.256h.044c3.194.02 5.097 1.975 5.287 5.388.108.046.216.094.321.142 1.49.7 2.58 1.761 3.154 3.07.797 1.82.871 4.79-1.548 7.158-1.85 1.81-4.094 2.628-7.277 2.65Zm1.003-11.69c-.242 0-.487.007-.739.021-1.836.103-2.98.946-2.916 2.143.067 1.256 1.452 1.839 2.784 1.767 1.224-.065 2.818-.543 3.086-3.71a10.5 10.5 0 0 0-2.215-.221z",
   "bluesky": "M12 10.8c-1.087-2.114-4.046-6.053-6.798-7.995C2.566.944 1.561 1.266.902 1.565.139 1.908 0 3.08 0 3.768c0 .69.378 5.65.624 6.479.815 2.736 3.713 3.66 6.383 3.364.136-.02.275-.039.415-.056-.138.022-.276.04-.415.056-3.912.58-7.387 2.005-2.83 7.078 5.013 5.19 6.87-1.113 7.823-4.308.953 3.195 2.05 9.271 7.733 4.308 4.267-4.308 1.172-6.498-2.74-7.078a8.741 8.741 0 0 1-.415-.056c.14.017.279.036.415.056 2.67.297 5.568-.628 6.383-3.364.246-.828.624-5.79.624-6.478 0-.69-.139-1.861-.902-2.206-.659-.298-1.664-.62-4.3 1.24C16.046 4.748 13.087 8.687 12 10.8Z",
-  "mastodon": "M23.268 5.313c-.35-2.578-2.617-4.61-5.304-5.004C17.51.242 15.792 0 11.813 0h-.03c-3.98 0-4.835.242-5.288.309C3.882.692 1.496 2.518.917 5.127.64 6.412.61 7.837.661 9.143c.074 1.874.088 3.745.26 5.611.118 1.24.325 2.47.62 3.68.55 2.237 2.777 4.098 4.96 4.857 2.336.792 4.849.923 7.256.38.265-.061.527-.132.786-.213.585-.184 1.27-.39 1.774-.753a.057.057 0 0 0 .023-.043v-1.809a.052.052 0 0 0-.02-.041.053.053 0 0 0-.046-.01 20.282 20.282 0 0 1-4.709.545c-2.73 0-3.463-1.284-3.674-1.818a5.593 5.593 0 0 1-.319-1.433.053.053 0 0 1 .066-.054c1.517.363 3.072.546 4.632.546.376 0 .75 0 1.125-.01 1.57-.044 3.224-.124 4.768-.422.038-.008.077-.015.11-.024 2.435-.464 4.753-1.92 4.989-5.604.008-.145.03-1.52.03-1.67.002-.512.167-3.63-.024-5.545zm-3.748 9.195h-2.561V8.29c0-1.309-.55-1.976-1.67-1.976-1.23 0-1.846.79-1.846 2.35v3.403h-2.546V8.663c0-1.56-.617-2.35-1.848-2.35-1.112 0-1.668.668-1.67 1.977v6.218H4.822V8.102c0-1.31.337-2.35 1.011-3.12.696-.77 1.608-1.164 2.74-1.164 1.311 0 2.302.5 2.962 1.498l.638 1.06.638-1.06c.66-.999 1.65-1.498 2.96-1.498 1.13 0 2.043.395 2.74 1.164.675.77 1.012 1.81 1.012 3.12z",
   "pinterest": "M12.017 0C5.396 0 .029 5.367.029 11.987c0 5.079 3.158 9.417 7.618 11.162-.105-.949-.199-2.403.041-3.439.219-.937 1.406-5.957 1.406-5.957s-.359-.72-.359-1.781c0-1.663.967-2.911 2.168-2.911 1.024 0 1.518.769 1.518 1.688 0 1.029-.653 2.567-.992 3.992-.285 1.193.6 2.165 1.775 2.165 2.128 0 3.768-2.245 3.768-5.487 0-2.861-2.063-4.869-5.008-4.869-3.41 0-5.409 2.562-5.409 5.199 0 1.033.394 2.143.889 2.741.099.12.112.225.085.345-.09.375-.293 1.199-.334 1.363-.053.225-.172.271-.401.165-1.495-.69-2.433-2.878-2.433-4.646 0-3.776 2.748-7.252 7.92-7.252 4.158 0 7.392 2.967 7.392 6.923 0 4.135-2.607 7.462-6.233 7.462-1.214 0-2.354-.629-2.758-1.379l-.749 2.848c-.269 1.045-1.004 2.352-1.498 3.146 1.123.345 2.306.535 3.55.535 6.607 0 11.985-5.365 11.985-11.987C23.97 5.39 18.592.026 11.985.026L12.017 0z",
   "linkedin": "M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z",
   "reddit": "M12 0C5.373 0 0 5.373 0 12c0 3.314 1.343 6.314 3.515 8.485l-2.286 2.286C.775 23.225 1.097 24 1.738 24H12c6.627 0 12-5.373 12-12S18.627 0 12 0Zm4.388 3.199c1.104 0 1.999.895 1.999 1.999 0 1.105-.895 2-1.999 2-.946 0-1.739-.657-1.947-1.539v.002c-1.147.162-2.032 1.15-2.032 2.341v.007c1.776.067 3.4.567 4.686 1.363.473-.363 1.064-.58 1.707-.58 1.547 0 2.802 1.254 2.802 2.802 0 1.117-.655 2.081-1.601 2.531-.088 3.256-3.637 5.876-7.997 5.876-4.361 0-7.905-2.617-7.998-5.87-.954-.447-1.614-1.415-1.614-2.538 0-1.548 1.255-2.802 2.803-2.802.645 0 1.239.218 1.712.585 1.275-.79 2.881-1.291 4.64-1.365v-.01c0-1.663 1.263-3.034 2.88-3.207.188-.911.993-1.595 1.959-1.595Zm-8.085 8.376c-.784 0-1.459.78-1.506 1.797-.047 1.016.64 1.429 1.426 1.429.786 0 1.371-.369 1.418-1.385.047-1.017-.553-1.841-1.338-1.841Zm7.406 0c-.786 0-1.385.824-1.338 1.841.047 1.017.634 1.385 1.418 1.385.785 0 1.473-.413 1.426-1.429-.046-1.017-.721-1.797-1.506-1.797Zm-3.703 4.013c-.974 0-1.907.048-2.77.135-.147.015-.241.168-.183.305.483 1.154 1.622 1.964 2.953 1.964 1.33 0 2.47-.81 2.953-1.964.057-.137-.037-.29-.184-.305-.863-.087-1.795-.135-2.769-.135Z"
@@ -33,7 +32,6 @@ const PLATFORMS = {
   x: { name: "X" },
   threads: { name: "Threads" },
   bluesky: { name: "Bluesky" },
-  mastodon: { name: "Mastodon" },
   linkedin: { name: "LinkedIn" },
   facebook: { name: "Facebook" },
   instagram: { name: "Instagram" },
@@ -59,10 +57,11 @@ const DEFAULT_SETTINGS = {
   showHeader: true,
   lastChannel: "",
   channels: [
-    { name: "Personal", folder: "Personal", site: "", platforms: ["site", "x", "threads", "bluesky", "linkedin"] },
+    { name: "Personal", folder: "Personal", site: "", platforms: ["site", "x", "threads", "bluesky", "linkedin"], zernioProfile: "" },
   ],
+  // keyName: the name of the keychain entry holding the Zernio API key (never the key). profiles: [{ id, name }].
+  zernio: { keyName: "", profiles: [] },
 };
-const MASTODON_VISIBILITY = ["public", "unlisted", "private"];
 
 const str = (v, fallback) => (typeof v === "string" ? v : fallback);
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
@@ -72,18 +71,6 @@ const cleanFolder = (f) => {
 };
 const join = (...parts) => parts.map(cleanFolder).filter(Boolean).join("/");
 
-// The accounts a channel publishes with. Each one is empty until the user pastes their own details in settings.
-function cleanAccounts(a) {
-  a = obj(a);
-  const b = obj(a.bluesky), m = obj(a.mastodon), w = obj(a.site);
-  const t = (v) => str(v, "").trim();
-  const limit = Math.floor(Number(m.limit));
-  return {
-    bluesky: { handle: t(b.handle).replace(/^@/, ""), password: t(b.password), service: t(b.service) || "https://bsky.social" },
-    mastodon: { instance: t(m.instance), token: t(m.token), visibility: MASTODON_VISIBILITY.includes(m.visibility) ? m.visibility : "public", limit: limit > 0 ? limit : 500 },
-    site: { kind: ["ghost", "wordpress"].includes(w.kind) ? w.kind : "", url: t(w.url), key: t(w.key), user: t(w.user), password: t(w.password) },
-  };
-}
 function cleanChannel(c) {
   c = c || {};
   const platforms = (Array.isArray(c.platforms) ? c.platforms : []).map((p) => String(p).toLowerCase().trim()).filter(isPlatform);
@@ -92,8 +79,15 @@ function cleanChannel(c) {
     folder: str(c.folder, "").trim(),
     site: str(c.site, "").trim(),
     platforms: PLATFORM_KEYS.filter((k) => platforms.includes(k)), // always in the one order
-    accounts: cleanAccounts(c.accounts),
+    zernioProfile: str(c.zernioProfile, "").trim(),
   };
+}
+function cleanZernio(z) {
+  z = obj(z);
+  const profiles = (Array.isArray(z.profiles) ? z.profiles : [])
+    .map((p) => ({ id: str(obj(p).id, "").trim(), name: str(obj(p).name, "").trim() }))
+    .filter((p) => p.id);
+  return { keyName: str(z.keyName, "").trim(), profiles };
 }
 function mergeSettings(saved) {
   const s = saved && typeof saved === "object" ? saved : {};
@@ -107,6 +101,7 @@ function mergeSettings(saved) {
     showHeader: typeof s.showHeader === "boolean" ? s.showHeader : DEFAULT_SETTINGS.showHeader,
     lastChannel: str(s.lastChannel, ""),
     channels: (Array.isArray(s.channels) ? s.channels : DEFAULT_SETTINGS.channels).map(cleanChannel).filter((c) => c.name),
+    zernio: cleanZernio(s.zernio),
   };
 }
 
@@ -146,28 +141,20 @@ function isPost(s, path, fm) {
   return !!(channelByFolder(s, path) || channelByName(s, (fm || {})[propKey(fm, s.channelProp)]));
 }
 
-/* ---------- publishing: where a post can go ----------
-   Only these have a free API that takes the user's own credentials. Bluesky and Mastodon post at once and
-   publicly; the website ones land as drafts. Each is sent only when the user presses Post in the confirm box. */
-const DESTINATIONS = {
-  bluesky: { platform: "bluesky", name: "Bluesky", action: "Post to Bluesky", limit: 300, sections: ["bluesky"] },
-  mastodon: { platform: "mastodon", name: "Mastodon", action: "Post to Mastodon", sections: ["mastodon"] },
-  ghost: { platform: "site", name: "Ghost", action: "Send to Ghost as a draft", sections: ["ghost", "website", "website blog", "blog"] },
-  wordpress: { platform: "site", name: "WordPress", action: "Send to WordPress as a draft", sections: ["wordpress", "website", "website blog", "blog"] },
-};
-// The destinations a channel has the details for.
-function readyDestinations(c) {
-  if (!c) return [];
-  const a = c.accounts || cleanAccounts(null);
-  const out = [];
-  if (c.platforms.includes("bluesky") && a.bluesky.handle && a.bluesky.password) out.push("bluesky");
-  if (c.platforms.includes("mastodon") && a.mastodon.instance && a.mastodon.token) out.push("mastodon");
-  if (c.platforms.includes("site") && a.site.url) {
-    if (a.site.kind === "ghost" && a.site.key) out.push("ghost");
-    if (a.site.kind === "wordpress" && a.site.user && a.site.password) out.push("wordpress");
-  }
-  return out;
-}
+/* ---------- publishing through Zernio ----------
+   Zernio (zernio.com) holds the user's connected social accounts. The plugin keeps one Zernio API key; each
+   channel names its Zernio profile, and a post goes to that profile's account on each platform picked in the
+   note. Nothing is sent until the user presses the button and confirms the exact text. */
+const ZERNIO = "https://zernio.com/api/v1";
+// The plugin's platform keys as Zernio names them. The website toggle has no social account behind it.
+const ZERNIO_PLATFORM = { x: "twitter", threads: "threads", bluesky: "bluesky", linkedin: "linkedin", facebook: "facebook", instagram: "instagram", tiktok: "tiktok", youtube: "youtube", pinterest: "pinterest", reddit: "reddit" };
+// The longest text each platform takes. Longer text is refused here, before anything is sent.
+const LIMITS = { x: 280, bluesky: 300, threads: 500, linkedin: 3000, pinterest: 500, instagram: 2200, tiktok: 2200, facebook: 63206, youtube: 5000, reddit: 40000 };
+const SEND_MODES = ["draft", "schedule", "now"];
+// The platforms picked in a note that can go out through Zernio for this channel.
+// The key itself is never in the settings: only the name of the keychain entry that holds it.
+function zernioReady(s, c) { return !!(c && s.zernio.keyName && c.zernioProfile); }
+function sendable(s, c, picked) { return zernioReady(s, c) ? PLATFORM_KEYS.filter((k) => picked.includes(k) && ZERNIO_PLATFORM[k]) : []; }
 
 // What the bar shows for a note, or null when the note is not a post. Never holds a credential: it is
 // written into the page as the bar's signature.
@@ -178,9 +165,13 @@ function headerData(s, file, fm) {
   const channel = named || channelByFolder(s, file.path);
   const picked = asList(fm[propKey(fm, s.platformsProp)]).map(lower).filter(isPlatform);
   const available = channel ? channel.platforms : [];
-  const publish = readyDestinations(channel)
-    .filter((k) => picked.includes(DESTINATIONS[k].platform))
-    .map((k) => ({ key: k, action: DESTINATIONS[k].action, url: str(fm[propKey(fm, k + "_url")], ""), date: String(fm[propKey(fm, k + "_date")] || "") }));
+  const send = sendable(s, channel, picked);
+  const publish = send.length ? {
+    platforms: send,
+    id: str(fm[propKey(fm, "zernio_id")], ""),
+    status: str(fm[propKey(fm, "zernio_status")], ""),
+    date: String(fm[propKey(fm, "zernio_date")] || ""),
+  } : null;
   return {
     path: file.path, // so a bar drawn for one note is never reused for another that looks the same
     channels: s.channels.map((c) => c.name),
@@ -257,10 +248,12 @@ function movedPath(s, path, to) {
 /* ---------- the text that is sent ---------- */
 const stripFrontmatter = (t) => String(t || "").replace(/^﻿?---\r?\n(?:[\s\S]*?\r?\n)?---[ \t]*(?:\r?\n|$)/, "");
 const HEADING = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/;
-const SECTION_NAMES = new Set(Object.values(DESTINATIONS).flatMap((d) => d.sections).concat(PLATFORM_KEYS.map((k) => lower(PLATFORMS[k].name))));
+// Headings that hold one place's own version of the post ("## LinkedIn", "## X", "## Website").
+const sectionsFor = (k) => [lower(PLATFORMS[k].name), k, ZERNIO_PLATFORM[k] || ""].concat(k === "site" ? ["website", "blog"] : []).filter(Boolean);
+const SECTION_NAMES = new Set(PLATFORM_KEYS.flatMap(sectionsFor));
 
 /* The part of the note a destination gets. A heading named after it ("## Bluesky", "## Website") holds its own
-   version. Otherwise it gets the note without any such sections, so a Mastodon version never reaches Bluesky. */
+   version. Otherwise it gets the note without any such sections, so a LinkedIn version never reaches X. */
 function sectionText(body, sections) {
   const lines = stripFrontmatter(body).replace(/\r\n?/g, "\n").split("\n");
   const own = [], rest = [];
@@ -291,231 +284,135 @@ function plainText(md) {
 }
 
 const segmenter = typeof Intl !== "undefined" && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
-// Bluesky counts graphemes: an emoji made of several code points is one.
+// Characters as a person counts them: an emoji made of several code points is one.
 function graphemes(t) { return segmenter ? Array.from(segmenter.segment(t)).length : Array.from(t).length; }
-const URL_RE = /https?:\/\/[^\s<>"'`]+/g;
-// A web address as written in running text, without the full stop or bracket after it.
-function trimUrl(u) {
-  u = u.replace(/[.,;:!?'"]+$/, "");
-  while (u.endsWith(")") && (u.match(/\(/g) || []).length < (u.match(/\)/g) || []).length) u = u.slice(0, -1);
-  return u;
-}
-// Mastodon counts every link as 23 characters, whatever its length.
-function mastodonLength(t) { return Array.from(t.replace(URL_RE, (u) => "x".repeat(23) + u.slice(trimUrl(u).length))).length; }
 
-// Bluesky shows a link or hashtag only where a "facet" marks it, by UTF-8 byte offsets.
-function blueskyFacets(text) {
-  const enc = new TextEncoder();
-  const bytes = (s) => enc.encode(s).length;
-  const facets = [];
-  for (const m of text.matchAll(URL_RE)) {
-    const uri = trimUrl(m[0]);
-    const start = bytes(text.slice(0, m.index));
-    facets.push({ index: { byteStart: start, byteEnd: start + bytes(uri) }, features: [{ $type: "app.bsky.richtext.facet#link", uri }] });
-  }
-  for (const m of text.matchAll(/(^|\s)#([^\s#]+)/g)) {
-    const tag = m[2].replace(/[.,;:!?'")\]]+$/, "");
-    if (!tag || /^\d+$/.test(tag) || tag.length > 64) continue;
-    const start = bytes(text.slice(0, m.index + m[1].length));
-    facets.push({ index: { byteStart: start, byteEnd: start + bytes("#" + tag) }, features: [{ $type: "app.bsky.richtext.facet#tag", tag }] });
-  }
-  return facets.sort((a, b) => a.index.byteStart - b.index.byteStart);
-}
-
-/* Markdown to simple HTML for a blog. Headings, paragraphs, lists, quotes, code, links, images (web addresses
-   only) and bold, italic and struck text. Everything else is sent as escaped text. */
-const esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const webUrl = (u) => /^(https?:\/\/|mailto:)/i.test(u);
-function inlineHtml(text) {
-  const keep = [];
-  const hold = (html) => `\u0001${keep.push(html) - 1}\u0002`;
-  let t = String(text);
-  t = t.replace(/`([^`\n]+)`/g, (m, code) => hold(`<code>${esc(code)}</code>`));
-  t = t.replace(/!\[\[[^\]]*\]\]/g, "");
-  t = t.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (m, alt, url) => (webUrl(url) ? hold(`<img src="${esc(url)}" alt="${esc(alt)}">`) : ""));
-  t = t.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, "$2").replace(/\[\[([^\]]+)\]\]/g, (m, target) => target.split("#")[0].split("/").pop());
-  t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, label, url) => (webUrl(url) ? hold(`<a href="${esc(url)}">${marks(esc(label))}</a>`) : label));
-  t = t.replace(URL_RE, (u) => { const clean = trimUrl(u); return hold(`<a href="${esc(clean)}">${esc(clean)}</a>`) + u.slice(clean.length); });
-  t = marks(esc(t));
-  return t.replace(/\u0001(\d+)\u0002/g, (m, i) => keep[Number(i)]);
-}
-function marks(t) {
-  return t.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>").replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
-    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>").replace(/~~([^~\n]+)~~/g, "<del>$1</del>").replace(/==([^=\n]+)==/g, "<mark>$1</mark>");
-}
-function markdownToHtml(md) {
-  const lines = String(md || "").replace(/%%[\s\S]*?%%/g, "").replace(/\r\n?/g, "\n").split("\n");
-  const out = [];
-  let para = [], list = null, quote = [];
-  const flushPara = () => { if (para.length) out.push(`<p>${para.map(inlineHtml).join("<br>")}</p>`); para = []; };
-  const flushList = () => { if (list) out.push(`<${list.tag}>${list.items.map((i) => `<li>${inlineHtml(i)}</li>`).join("")}</${list.tag}>`); list = null; };
-  const flushQuote = () => { if (quote.length) out.push(`<blockquote><p>${quote.map(inlineHtml).join("<br>")}</p></blockquote>`); quote = []; };
-  const flush = () => { flushPara(); flushList(); flushQuote(); };
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const fence = /^\s*(```|~~~)/.exec(line);
-    if (fence) {
-      flush();
-      const code = [];
-      while (++i < lines.length && !lines[i].trim().startsWith(fence[1])) code.push(lines[i]);
-      out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
-      continue;
-    }
-    if (!line.trim()) { flush(); continue; }
-    const h = HEADING.exec(line);
-    if (h) { flush(); out.push(`<h${h[1].length}>${inlineHtml(h[2])}</h${h[1].length}>`); continue; }
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) { flush(); out.push("<hr>"); continue; }
-    const q = /^\s*>\s?(.*)$/.exec(line);
-    if (q) { flushPara(); flushList(); quote.push(q[1]); continue; }
-    const li = /^\s*(?:([-*+])|(\d+)[.)])\s+(.*)$/.exec(line);
-    if (li) {
-      flushPara(); flushQuote();
-      const tag = li[1] ? "ul" : "ol";
-      if (list && list.tag !== tag) flushList();
-      if (!list) list = { tag, items: [] };
-      list.items.push(li[3].replace(/^\[[ xX]\]\s+/, ""));
-      continue;
-    }
-    flushList(); flushQuote();
-    para.push(line.trim());
-  }
-  flush();
-  return out.join("\n");
-}
-
-// The blog title: the note's title property, else its first top heading (taken out of the body), else its name.
-function blogParts(fm, body, basename) {
-  let text = body;
-  let title = str(fm && fm[propKey(fm, "title")], "").trim();
-  if (!title) {
-    const m = /^[ \t]*#[ \t]+(.+?)[ \t]*#*[ \t]*$/m.exec(text);
-    if (m && !text.slice(0, m.index).trim()) { title = m[1]; text = text.slice(m.index + m[0].length); }
-  }
-  return { title: title || basename, html: markdownToHtml(text.trim()) };
-}
-
-/* ---------- publishing: the requests ----------
+/* ---------- Zernio: the requests ----------
    Every request goes through the app's requestUrl. `req` is passed in so tests can stand in for the network. */
-// A server address as https://host[/path], without a trailing slash. Plain http only for this computer.
-function serverUrl(u, what) {
-  let s = String(u || "").trim().replace(/\/+$/, "");
-  if (!s) throw new Error(`Add the ${what} address in settings first.`);
-  if (!/^[a-z]+:\/\//i.test(s)) s = "https://" + s;
-  if (!/^https:\/\//i.test(s) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(s)) throw new Error(`The ${what} address must start with https://, so your password is not sent in the clear.`);
-  return s;
-}
-async function call(req, what, o) {
+const utf8 = (s) => new TextEncoder().encode(s);
+async function zernio(req, key, o, what) {
+  if (!key) throw new Error("Choose your Zernio API key in settings first.");
   let res;
-  try { res = await req(Object.assign({ throw: false }, o)); } catch (e) { throw new Error(`${what} could not be reached: ${e.message}`); }
+  try {
+    res = await req(Object.assign({ throw: false, method: "GET", headers: {} }, o, {
+      url: ZERNIO + o.path,
+      headers: Object.assign({ Authorization: `Bearer ${key}` }, o.body ? { "Content-Type": "application/json" } : {}, o.headers || {}),
+    }));
+  } catch (e) { throw new Error(`Zernio could not be reached: ${e.message}`); }
   let json = null;
   try { json = res.json; } catch (e) { json = null; } // an error page that is not JSON
   if (!res || res.status < 200 || res.status >= 300) {
     const j = obj(json);
-    const why = j.message || j.error_description || j.error || (Array.isArray(j.errors) && j.errors[0] && (j.errors[0].context || j.errors[0].message)) || "";
-    throw new Error(`${what} said no (${res ? res.status : "no answer"})${why ? ": " + why : ""}`);
+    const why = j.error || j.message || "";
+    const status = res ? res.status : "no answer";
+    if (status === 401 || status === 403) throw new Error(`Zernio refused the API key (${status}). Check it in settings.`);
+    throw new Error(`Zernio said no to ${what} (${status})${why ? ": " + why : ""}`);
   }
   return obj(json);
 }
-const jsonPost = (url, body, headers) => ({ url, method: "POST", contentType: "application/json", headers: headers || {}, body: JSON.stringify(body) });
-
-// Bluesky (AT Protocol): a session from the handle and app password, then a post record. The session is not kept.
-async function postBluesky(req, acc, text, nowIso) {
-  const base = serverUrl(acc.service || "https://bsky.social", "Bluesky server");
-  const session = await call(req, "Bluesky", jsonPost(`${base}/xrpc/com.atproto.server.createSession`, { identifier: acc.handle, password: acc.password }));
-  if (!session.accessJwt || !session.did) throw new Error("Bluesky did not open a session.");
-  const record = { $type: "app.bsky.feed.post", text, createdAt: nowIso };
-  const facets = blueskyFacets(text);
-  if (facets.length) record.facets = facets;
-  const made = await call(req, "Bluesky", jsonPost(`${base}/xrpc/com.atproto.repo.createRecord`, { repo: session.did, collection: "app.bsky.feed.post", record }, { Authorization: `Bearer ${session.accessJwt}` }));
-  const rkey = String(made.uri || "").split("/").pop();
-  if (!rkey) throw new Error("Bluesky did not say where the post is.");
-  return { url: `https://bsky.app/profile/${session.handle || acc.handle}/post/${rkey}` };
+const idOf = (x) => String((x && (x._id || x.id)) || "");
+// The profiles under the key: [{ id, name }]. Used to fill the channel's profile list in settings.
+async function zernioProfiles(req, key) {
+  const j = await zernio(req, key, { path: "/profiles?limit=1000" }, "listing profiles");
+  const list = Array.isArray(j.profiles) ? j.profiles : Array.isArray(j.data) ? j.data : [];
+  return list.map((p) => ({ id: idOf(p), name: str(p.name, "").trim() || idOf(p) })).filter((p) => p.id);
+}
+// The accounts of one profile: [{ id, platform, name }].
+async function zernioAccounts(req, key, profileId) {
+  const j = await zernio(req, key, { path: `/accounts?profileId=${encodeURIComponent(profileId)}&limit=500` }, "listing accounts");
+  const list = Array.isArray(j.accounts) ? j.accounts : Array.isArray(j.data) ? j.data : [];
+  return list
+    .filter((a) => a && a.isActive !== false && (!a.profileId || idOf(a.profileId) === profileId || a.profileId === profileId))
+    .map((a) => ({ id: idOf(a), platform: lower(a.platform), name: str(a.username, "") || str(a.displayName, "") }))
+    .filter((a) => a.id && a.platform);
 }
 
-// Mastodon: one status, with a key so a retry after a lost answer does not post twice.
-async function postMastodon(req, acc, text, idemKey) {
-  const base = serverUrl(acc.instance, "Mastodon server");
-  const made = await call(req, "Mastodon", jsonPost(`${base}/api/v1/statuses`, { status: text, visibility: acc.visibility || "public" }, { Authorization: `Bearer ${acc.token}`, "Idempotency-Key": idemKey }));
-  if (!made.url) throw new Error("Mastodon did not say where the post is.");
-  return { url: made.url };
+// A steady key for the same note, text and choice, in the form of a UUID: Zernio treats a repeat within a day as
+// the same post, so pressing twice, or a retry after a lost answer, never makes two.
+function stableId(s) {
+  const h = (seed) => { let x = seed; for (const ch of utf8(s)) { x ^= ch; x = Math.imul(x, 0x01000193) >>> 0; } return x.toString(16).padStart(8, "0"); };
+  const hex = h(0x811c9dc5) + h(0x01000193) + h(0x9e3779b9) + h(0x7f4a7c15);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-// Ghost Admin API: a short-lived token (a JWT signed with the key's secret, HS256), then a draft post from HTML.
-const b64 = (bytes) => btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
-const b64url = (bytes) => b64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const utf8 = (s) => new TextEncoder().encode(s);
-function webCrypto() {
-  const c = (typeof window !== "undefined" && window.crypto) || globalThis.crypto;
-  if (!c || !c.subtle) throw new Error("This device cannot sign the Ghost key.");
-  return c.subtle;
-}
-async function ghostToken(adminKey, nowMs) {
-  const parts = String(adminKey || "").trim().split(":");
-  const [id, secret] = parts;
-  if (parts.length !== 2 || !id || !/^[0-9a-f]+$/i.test(secret || "") || secret.length % 2) throw new Error("The Ghost Admin API key should look like id:secret (copy it from Ghost's Integrations page).");
-  const iat = Math.floor(nowMs / 1000);
-  const head = b64url(utf8(JSON.stringify({ alg: "HS256", typ: "JWT", kid: id })));
-  const body = b64url(utf8(JSON.stringify({ iat, exp: iat + 5 * 60, aud: "/admin/" })));
-  const keyBytes = new Uint8Array(secret.match(/../g).map((h) => parseInt(h, 16)));
-  const subtle = webCrypto();
-  const key = await subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await subtle.sign("HMAC", key, utf8(`${head}.${body}`));
-  return `${head}.${body}.${b64url(new Uint8Array(sig))}`;
-}
-async function postGhost(req, acc, parts, nowMs) {
-  const base = serverUrl(acc.url, "Ghost site");
-  const token = await ghostToken(acc.key, nowMs);
-  const made = await call(req, "Ghost", jsonPost(`${base}/ghost/api/admin/posts/?source=html`, { posts: [{ title: parts.title, html: parts.html, status: "draft" }] }, { Authorization: `Ghost ${token}`, "Accept-Version": "v5.0" }));
-  const post = Array.isArray(made.posts) ? made.posts[0] : null;
-  if (!post) throw new Error("Ghost did not send the post back.");
-  return { url: post.url || `${base}/ghost/#/editor/post/${post.id}`, id: post.id };
-}
-
-// WordPress REST API with an application password: a draft post.
-async function postWordPress(req, acc, parts) {
-  const base = serverUrl(acc.url, "WordPress site");
-  // WordPress shows application passwords in groups with spaces; it accepts them with or without.
-  const auth = b64(utf8(`${acc.user}:${acc.password.replace(/\s+/g, "")}`));
-  const made = await call(req, "WordPress", jsonPost(`${base}/wp-json/wp/v2/posts`, { title: parts.title, content: parts.html, status: "draft" }, { Authorization: `Basic ${auth}` }));
-  if (!made.id) throw new Error("WordPress did not send the post back.");
-  return { url: made.link || `${base}/?p=${made.id}`, id: made.id };
-}
-
-// A short, steady key for the same note and text: the same post pressed twice is one post on Mastodon.
-function hashKey(s) {
-  let h = 0x811c9dc5;
-  for (const ch of utf8(s)) { h ^= ch; h = Math.imul(h, 0x01000193) >>> 0; }
-  return "pp-" + h.toString(16);
-}
-
-/* Everything the confirm box shows and the request sends, worked out from the note before anything is sent. */
-function preparePost(s, file, fm, raw, key) {
-  const dest = DESTINATIONS[key];
-  if (!dest) throw new Error("Unknown place to publish.");
+/* Everything the confirm box shows and the request sends, worked out from the note before anything is sent.
+   Each platform gets the note's text, or its own section ("## LinkedIn"). Platforms with the same text go as one
+   Zernio post. */
+function preparePost(s, file, fm, raw) {
   fm = fm || {};
   const channel = channelByName(s, fm[propKey(fm, s.channelProp)]) || channelByFolder(s, file.path);
-  if (!channel || !readyDestinations(channel).includes(key)) throw new Error(`Add the ${dest.name} details to this post's channel in settings first.`);
-  const acc = channel.accounts;
-  const body = sectionText(raw, dest.sections);
-  const p = { key, channel: channel.name, action: dest.action, name: dest.name, posted: str(fm[propKey(fm, key + "_url")], "") };
-  if (key === "bluesky" || key === "mastodon") {
-    p.text = plainText(body);
-    p.limit = key === "bluesky" ? dest.limit : acc.mastodon.limit;
-    p.length = key === "bluesky" ? graphemes(p.text) : mastodonLength(p.text);
-    p.where = key === "bluesky"
-      ? `As @${acc.bluesky.handle} on ${serverUrl(acc.bluesky.service, "Bluesky server").replace(/^https?:\/\//, "")}. It is public as soon as it is posted.`
-      : `To ${serverUrl(acc.mastodon.instance, "Mastodon server").replace(/^https?:\/\//, "")}, visible: ${acc.mastodon.visibility}.${acc.mastodon.visibility === "public" ? " It is public as soon as it is posted." : ""}`;
-    p.problem = !p.text ? "The post is empty." : p.length > p.limit ? `Too long: ${p.length} of ${p.limit} characters.` : "";
-  } else {
-    const parts = blogParts(fm, body, file.basename);
-    p.title = parts.title;
-    p.html = parts.html;
-    p.text = parts.html;
-    p.where = `To ${serverUrl(acc.site.url, `${dest.name} site`)} as a draft. Nothing is public until you publish it there.`;
-    p.problem = parts.html ? "" : "The post is empty.";
+  if (!channel) throw new Error("Pick a channel for this post first.");
+  if (!s.zernio.keyName) throw new Error("Choose your Zernio API key from the keychain in the Post Picker settings first.");
+  if (!channel.zernioProfile) throw new Error(`Choose the Zernio profile for ${channel.name} in settings first.`);
+  const picked = asList(fm[propKey(fm, s.platformsProp)]).map(lower).filter(isPlatform);
+  const platforms = sendable(s, channel, picked);
+  if (!platforms.length) throw new Error("Pick at least one social platform in the bar first. The website toggle is not sent.");
+  const groups = [];
+  for (const k of platforms) {
+    const text = plainText(sectionText(raw, sectionsFor(k)));
+    const g = groups.find((x) => x.text === text);
+    if (g) g.platforms.push(k); else groups.push({ text, platforms: [k] });
   }
-  return p;
+  const problems = [];
+  for (const g of groups) {
+    g.length = graphemes(g.text);
+    g.limit = Math.min(...g.platforms.map((k) => LIMITS[k] || Infinity));
+    if (!g.text) problems.push("The post is empty.");
+    else if (g.length > g.limit) {
+      const tight = g.platforms.filter((k) => (LIMITS[k] || Infinity) < g.length).map((k) => PLATFORMS[k].name);
+      problems.push(`Too long for ${tight.join(", ")}: ${g.length} of ${g.limit} characters. Shorten it, or give it its own section such as “## ${tight[0]}”.`);
+    }
+  }
+  const profile = (s.zernio.profiles.find((p) => p.id === channel.zernioProfile) || {}).name || channel.zernioProfile;
+  return {
+    path: file.path, channel: channel.name, profileId: channel.zernioProfile, profile, groups,
+    sent: { id: str(fm[propKey(fm, "zernio_id")], ""), status: str(fm[propKey(fm, "zernio_status")], "") },
+    problem: problems.join(" "),
+  };
 }
+
+// "YYYY-MM-DDTHH:mm" from a date-and-time box, as Zernio's local time. Empty when it is not a real future time.
+function scheduleTime(value, nowMs) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(String(value || "").trim());
+  if (!m) return "";
+  const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime();
+  return Number.isFinite(t) && t > nowMs ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00` : "";
+}
+
+/* Sends what the confirm box showed. mode: "draft" (saved in Zernio, nothing goes out), "schedule" (at `when`,
+   this device's time zone) or "now". Returns [{ id, status, urls: { platformKey: url } }], one per Zernio post. */
+async function sendToZernio(req, key, prep, mode, when, timeZone) {
+  if (!key) throw new Error("The Zernio API key is not in this device's keychain. Add it in settings, under Keychain.");
+  if (!SEND_MODES.includes(mode)) throw new Error("Choose draft, schedule or publish now.");
+  if (mode === "schedule" && !when) throw new Error("Choose a date and time in the future.");
+  const accounts = await zernioAccounts(req, key, prep.profileId);
+  const missing = [];
+  const accountFor = (k) => {
+    const a = accounts.find((x) => x.platform === ZERNIO_PLATFORM[k]);
+    if (!a) missing.push(PLATFORMS[k].name);
+    return a;
+  };
+  const plans = prep.groups.map((g) => ({ g, targets: g.platforms.map((k) => ({ k, a: accountFor(k) })) }));
+  if (missing.length) throw new Error(`The Zernio profile ${prep.profile} has no ${missing.join(", ")} account. Connect it in Zernio or turn it off in the bar.`);
+  const out = [];
+  for (const { g, targets } of plans) {
+    const body = { content: g.text, platforms: targets.map((t) => ({ platform: ZERNIO_PLATFORM[t.k], accountId: t.a.id })) };
+    if (mode === "now") body.publishNow = true;
+    if (mode === "schedule") { body.scheduledFor = when; body.timezone = timeZone || "UTC"; }
+    // No time and not now: Zernio saves it as a draft.
+    const idem = stableId(`${prep.path}\n${mode}\n${when || ""}\n${body.platforms.map((p) => p.accountId).join(",")}\n${g.text}`);
+    const j = await zernio(req, key, { path: "/posts", method: "POST", body: JSON.stringify(body), headers: { "Idempotency-Key": idem } }, "the post");
+    const post = obj(j.post);
+    const urls = {};
+    for (const p of Array.isArray(post.platforms) ? post.platforms : []) {
+      const k = Object.keys(ZERNIO_PLATFORM).find((x) => ZERNIO_PLATFORM[x] === lower(p.platform));
+      if (k && p.platformPostUrl) urls[k] = String(p.platformPostUrl);
+    }
+    out.push({ id: idOf(post), status: str(post.status, mode === "now" ? "published" : mode === "schedule" ? "scheduled" : "draft"), urls });
+  }
+  return out;
+}
+
 
 /* ---------- the bar ---------- */
 function svgIcon(parent, key, size) {
@@ -567,21 +464,20 @@ function drawHeader(h, d, on) {
   if (!d.channel) icons.createSpan({ cls: "pp-hint", text: "Pick a channel to see its platforms." });
   h.createDiv({ cls: "pp-summary", text: summary(d) });
 
-  // Publishing: only for platforms picked in this note whose account details are in settings.
-  if (d.publish && d.publish.length && on.publish) {
+  // Sending: one button, for the social platforms picked in this note, once Zernio is set up for the channel.
+  if (d.publish && on.publish) {
     const row3 = h.createDiv("pp-row");
-    row3.createSpan({ cls: "pp-label", text: "Publish" });
+    row3.createSpan({ cls: "pp-label", text: "Zernio" });
     const box = row3.createDiv("pp-publish");
-    for (const p of d.publish) {
-      const b = box.createEl("button", { cls: "pp-pub", text: p.url ? `${p.action} again` : p.action, attr: { type: "button", "data-publish": p.key } });
-      b.addEventListener("click", () => on.publish(p.key));
-      if (p.url) {
-        const day = p.date ? ` ${p.date.slice(0, 10)}` : "";
-        box.createEl("a", { cls: "pp-posted", text: `Posted${day}`, href: p.url, attr: { target: "_blank", rel: "noopener", "data-posted": p.key } });
-      }
+    const b = box.createEl("button", { cls: "pp-pub", text: d.publish.id ? "Send to Zernio again" : "Send to Zernio", attr: { type: "button", "data-publish": "zernio" } });
+    b.addEventListener("click", () => on.publish());
+    if (d.publish.id) {
+      const day = d.publish.date ? ` · ${d.publish.date.slice(0, 16).replace("T", " ")}` : "";
+      box.createSpan({ cls: "pp-posted", text: `In Zernio: ${d.publish.status || "sent"}${day}`, attr: { "data-posted": "zernio" } });
     }
   }
 }
+
 
 /* ---------- placing the bar in a note ----------
    Right above the properties block; without one, under the inline title, or at the top. In Live Preview
@@ -676,7 +572,7 @@ class PostBars {
         channel: (name) => this.plugin.setChannel(file, name),
         toggle: (key, on) => this.plugin.setPlatform(file, key, on),
         all: (on) => this.plugin.setAll(file, on),
-        publish: (key) => this.plugin.confirmPublish(file, key),
+        publish: () => this.plugin.confirmPublish(file),
       });
     }
     this.watch(view, box.el, box.mode);
@@ -706,55 +602,66 @@ class PostBars {
   }
 }
 
-/* ---------- confirm boxes ---------- */
+
+/* ---------- the confirm box ---------- */
 function setModalTitle(modal, title) {
   if (typeof modal.setTitle === "function") modal.setTitle(title); // 1.5.0 has setTitle; older builds only titleEl
   else if (modal.titleEl) modal.titleEl.setText(title);
 }
+const pad2 = (n) => String(n).padStart(2, "0");
+// "YYYY-MM-DDTHH:mm" for a date-and-time box, an hour from now, on the hour.
+function nextHour(nowMs) {
+  const d = new Date(nowMs + 60 * 60 * 1000);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:00`;
+}
 
-// Shows the exact text and where it goes. Nothing is sent unless the user presses the button.
-class ConfirmPublishModal extends Modal {
-  constructor(app, p, onYes) { super(app); this.p = p; this.onYes = onYes; }
+// Shows the exact text for each platform and where it goes, and asks how: draft, schedule or now.
+// Nothing is sent unless the user presses the button.
+class ZernioModal extends Modal {
+  constructor(app, p, onSend) { super(app); this.p = p; this.onSend = onSend; this.mode = "draft"; this.when = nextHour(Date.now()); }
   onOpen() {
     const p = this.p;
     const el = this.contentEl;
     el.empty();
     el.addClass("pp-confirm");
-    setModalTitle(this, `${p.action}?`);
-    el.createEl("p", { cls: "pp-confirm-where", text: p.where });
-    if (p.posted) el.createEl("p", { cls: "pp-confirm-warn", text: `This post is already on ${p.name}: ${p.posted}. Posting again makes a second copy.` });
-    if (p.title !== undefined) el.createDiv({ cls: "pp-confirm-title", text: `Title: ${p.title}` });
-    if (p.html !== undefined) el.createDiv({ cls: "pp-confirm-label", text: "The HTML that is sent:" });
-    el.createEl("pre", { cls: "pp-confirm-text", text: p.text });
-    if (p.limit) el.createDiv({ cls: `pp-confirm-count${p.length > p.limit ? " is-over" : ""}`, text: `${p.length} of ${p.limit} characters` });
+    setModalTitle(this, "Send to Zernio");
+    el.createEl("p", { cls: "pp-confirm-where", text: `To the Zernio profile “${p.profile}”, for ${p.channel}.` });
+    if (p.sent.id) el.createEl("p", { cls: "pp-confirm-warn", text: `This post was sent to Zernio before (${p.sent.status || "sent"}). Sending again makes a second post there.` });
+    for (const g of p.groups) {
+      el.createDiv({ cls: "pp-confirm-label", text: g.platforms.map((k) => PLATFORMS[k].name).join(", ") });
+      el.createEl("pre", { cls: "pp-confirm-text", text: g.text });
+      el.createDiv({ cls: `pp-confirm-count${g.length > g.limit ? " is-over" : ""}`, text: Number.isFinite(g.limit) ? `${g.length} of ${g.limit} characters` : `${g.length} characters` });
+    }
     if (p.problem) el.createEl("p", { cls: "pp-confirm-warn", text: p.problem });
+
+    const how = el.createDiv({ cls: "pp-seg pp-mode", attr: { role: "radiogroup", "aria-label": "How to send" } });
+    const whenRow = el.createDiv("pp-when");
+    const input = whenRow.createEl("input", { attr: { type: "datetime-local", "aria-label": "When to post", value: this.when } });
+    input.addEventListener("input", () => { this.when = input.value; });
+    const note = el.createEl("p", { cls: "pp-confirm-where" });
     const row = el.createDiv("modal-button-container");
     const no = row.createEl("button", { text: "Cancel", attr: { type: "button", "data-confirm": "no" } });
     no.addEventListener("click", () => this.close());
-    if (!p.problem) {
-      const yes = row.createEl("button", { cls: "mod-cta", text: p.key === "ghost" || p.key === "wordpress" ? "Send draft" : "Post", attr: { type: "button", "data-confirm": "yes" } });
-      yes.addEventListener("click", () => { this.close(); return this.onYes(); });
+    const yes = p.problem ? null : row.createEl("button", { cls: "mod-cta", attr: { type: "button", "data-confirm": "yes" } });
+    const labels = { draft: "Save as a draft", schedule: "Schedule", now: "Publish now" };
+    const paint = () => {
+      for (const b of Array.from(how.children)) { const on = b.getAttr("data-mode") === this.mode; b.toggleClass("is-on", on); b.setAttr("aria-checked", String(on)); }
+      whenRow.toggleClass("pp-hidden", this.mode !== "schedule");
+      note.setText(this.mode === "draft" ? "Saved in Zernio as a draft. Nothing is posted until you schedule or publish it there."
+        : this.mode === "schedule" ? "Zernio posts it at this time, in this device's time zone."
+          : "Posted on every platform above as soon as you press the button.");
+      if (yes) yes.setText(this.mode === "draft" ? "Send draft" : this.mode === "schedule" ? "Schedule" : "Publish now");
+    };
+    for (const m of SEND_MODES) {
+      const b = how.createEl("button", { cls: "pp-chip", text: labels[m], attr: { type: "button", role: "radio", "data-mode": m } });
+      b.addEventListener("click", () => { this.mode = m; paint(); });
     }
+    if (yes) yes.addEventListener("click", () => { this.close(); return this.onSend(this.mode, this.when); });
+    paint();
   }
   onClose() { this.contentEl.empty(); }
 }
 
-// For the command: which of the note's ready places to publish to.
-class ChoosePublishModal extends Modal {
-  constructor(app, choices, onPick) { super(app); this.choices = choices; this.onPick = onPick; }
-  onOpen() {
-    setModalTitle(this, "Publish this post");
-    const el = this.contentEl;
-    el.empty();
-    el.addClass("pp-confirm");
-    const row = el.createDiv("pp-publish");
-    for (const c of this.choices) {
-      const b = row.createEl("button", { cls: "pp-pub", text: c.url ? `${c.action} again` : c.action, attr: { type: "button", "data-publish": c.key } });
-      b.addEventListener("click", () => { this.close(); return this.onPick(c.key); });
-    }
-  }
-  onClose() { this.contentEl.empty(); }
-}
 
 /* ---------- the plugin ---------- */
 class PostPicker extends Plugin {
@@ -766,13 +673,13 @@ class PostPicker extends Plugin {
     this.addRibbonIcon("square-pen", "New post", () => this.newPost());
     this.addCommand({ id: "new-post", name: "New post", callback: () => this.newPost() });
     this.addCommand({
-      id: "publish",
-      name: "Publish the open post",
+      id: "send-to-zernio",
+      name: "Send the open post to Zernio",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         const d = file ? headerData(this.settings, file, this.frontmatter(file)) : null;
-        if (!d || !d.publish.length) return false;
-        if (!checking) new ChoosePublishModal(this.app, d.publish, (key) => this.confirmPublish(file, key)).open();
+        if (!d || !d.publish) return false;
+        if (!checking) this.confirmPublish(file);
         return true;
       },
     });
@@ -859,42 +766,49 @@ class PostPicker extends Plugin {
     } catch (e) { new Notice(`Could not save the platforms: ${e.message}`); }
   }
 
+
+  // The Zernio API key, read from this device's keychain (Settings, Keychain) under the name chosen in settings.
+  zernioKey() {
+    const name = this.settings.zernio.keyName;
+    const store = this.app.secretStorage;
+    if (!name || !store || typeof store.getSecret !== "function") return "";
+    try { return store.getSecret(name) || ""; } catch (e) { return ""; }
+  }
+
   // Reads the note as it is now and opens the confirm box. Returns the box, or null with a notice.
-  async confirmPublish(file, key) {
+  async confirmPublish(file) {
     try {
       const raw = await this.app.vault.read(file);
-      const p = preparePost(this.settings, file, this.frontmatter(file), raw, key);
-      const modal = new ConfirmPublishModal(this.app, p, () => this.publish(file, p));
+      const p = preparePost(this.settings, file, this.frontmatter(file), raw);
+      const modal = new ZernioModal(this.app, p, (mode, when) => this.publish(file, p, mode, when));
       modal.open();
       return modal;
     } catch (e) { new Notice(e.message); return null; }
   }
 
-  // Sends what the confirm box showed, then writes where it went into the note. One send per note and place at a time.
-  async publish(file, p) {
-    const lock = `${file.path}|${p.key}`;
-    if (this.sending.has(lock)) return null;
-    this.sending.add(lock);
-    const acc = (this.channelFor(p.channel) || {}).accounts;
+  // Sends what the confirm box showed, then writes where it went into the note. One send per note at a time.
+  async publish(file, p, mode, whenValue) {
+    if (this.sending.has(file.path)) return null;
+    this.sending.add(file.path);
     try {
-      if (!acc) throw new Error(`The channel ${p.channel} is gone from settings.`);
       const now = Date.now();
-      let res;
-      if (p.key === "bluesky") res = await postBluesky(this.request, acc.bluesky, p.text, new Date(now).toISOString());
-      else if (p.key === "mastodon") res = await postMastodon(this.request, acc.mastodon, p.text, hashKey(`${file.path}\n${p.text}`));
-      else if (p.key === "ghost") res = await postGhost(this.request, acc.site, p, now);
-      else if (p.key === "wordpress") res = await postWordPress(this.request, acc.site, p);
-      else throw new Error("Unknown place to publish.");
+      const when = mode === "schedule" ? scheduleTime(whenValue, now) : "";
+      if (mode === "schedule" && !when) throw new Error("Choose a date and time in the future.");
+      const tz = (typeof Intl !== "undefined" && Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
+      const res = await sendToZernio(this.request, this.zernioKey(), p, mode, when, tz);
       await this.app.fileManager.processFrontMatter(file, (fm) => {
-        fm[propKey(fm, `${p.key}_url`)] = res.url;
-        fm[propKey(fm, `${p.key}_date`)] = window.moment(now).format("YYYY-MM-DDTHH:mm");
+        fm[propKey(fm, "zernio_id")] = res.map((r) => r.id).filter(Boolean).join(", ");
+        fm[propKey(fm, "zernio_status")] = Array.from(new Set(res.map((r) => r.status))).join(", ");
+        fm[propKey(fm, "zernio_date")] = window.moment(now).format("YYYY-MM-DDTHH:mm");
+        if (when) fm[propKey(fm, "zernio_scheduled")] = when.slice(0, 16);
+        for (const r of res) for (const [k, url] of Object.entries(r.urls)) fm[propKey(fm, `${k}_url`)] = url;
       });
-      new Notice(p.key === "ghost" || p.key === "wordpress" ? `Sent to ${p.name} as a draft.` : `Posted to ${p.name}.`);
+      new Notice(mode === "draft" ? "Saved in Zernio as a draft." : mode === "schedule" ? `Scheduled in Zernio for ${when.slice(0, 16).replace("T", " ")}.` : "Sent to Zernio to publish now.");
       return res;
     } catch (e) {
-      new Notice(`Not published: ${e.message}`);
+      new Notice(`Not sent: ${e.message}`);
       return null;
-    } finally { this.sending.delete(lock); }
+    } finally { this.sending.delete(file.path); }
   }
 }
 
@@ -918,8 +832,26 @@ class PostPickerSettingTab extends PluginSettingTab {
     new Setting(el).setName("Show the bar on post notes")
       .addToggle((t) => t.setValue(s.showHeader).onChange(async (v) => { s.showHeader = v; await save(); }));
 
+    // Zernio: optional. The key lives in the device's keychain; the settings keep only its name.
+    new Setting(el).setName("Sending with Zernio").setHeading();
+    el.createDiv({ cls: "setting-item-description", text: "Optional. Zernio (zernio.com) posts to the social accounts you connected there. Make an API key in Zernio under API keys. It is kept in this device's keychain (Settings, Keychain), encrypted by your system, never in the plugin's files. Then pick each channel's Zernio profile below." });
+    const keyRow = new Setting(el).setName("Zernio API key").setDesc("Choose or add the keychain entry that holds it.");
+    if (typeof SecretComponent === "function") {
+      keyRow.addComponent((box) => new SecretComponent(this.app, box).setValue(s.zernio.keyName).onChange(async (v) => { s.zernio.keyName = String(v || "").trim(); await save(); }));
+    } else {
+      keyRow.setDesc("This version of the app has no keychain. Update the app to send with Zernio.");
+    }
+    const check = new Setting(el).setName("Profiles").setDesc(s.zernio.profiles.length ? `${s.zernio.profiles.length} loaded: ${s.zernio.profiles.map((x) => x.name).join(", ")}.` : "Not loaded yet.");
+    check.addButton((b) => b.setButtonText("Check key and load profiles").onClick(async () => {
+      check.setDesc("Checking…");
+      try {
+        s.zernio.profiles = await zernioProfiles(p.request, p.zernioKey());
+        await save();
+        this.display();
+      } catch (e) { check.setDesc(e.message); }
+    }));
+
     new Setting(el).setName("Channels").setHeading();
-    el.createDiv({ cls: "setting-item-description", text: "Publishing is optional. Account details you add here are saved in this plugin's data.json file inside your vault, in plain text. If you sync your vault or plugin settings, they sync too. Use app passwords, never your main password." });
     s.channels.forEach((c, i) => {
       const box = el.createDiv("pp-settings-channel");
       new Setting(box).setName(c.name || `Channel ${i + 1}`).setHeading()
@@ -927,16 +859,33 @@ class PostPickerSettingTab extends PluginSettingTab {
       new Setting(box).setName("Name").addText((t) => t.setValue(c.name).onChange(async (v) => { c.name = v.trim(); await save(); }));
       new Setting(box).setName("Folder").setDesc("Inside the posts folder.").addText((t) => t.setValue(c.folder).onChange(async (v) => { c.folder = v.trim(); await save(); }));
       new Setting(box).setName("Website").setDesc("Shown on the website toggle, such as example.com.").addText((t) => t.setValue(c.site).onChange(async (v) => { c.site = v.trim(); await save(); }));
-      const plat = new Setting(box).setName("Platforms it posts to");
+      new Setting(box).setName("Platforms it posts to").setDesc("Tap to turn each on or off.");
+      // A grid of labelled chips: twelve unlabelled toggles in one row ran off the edge of the settings pane.
+      const grid = box.createDiv({ cls: "pp-settings-platforms", attr: { role: "group", "aria-label": `Platforms for ${c.name}` } });
       for (const key of PLATFORM_KEYS) {
-        plat.addToggle((t) => t.setTooltip(PLATFORMS[key].name).setValue(c.platforms.includes(key)).onChange(async (v) => {
-          c.platforms = nextList(c.platforms, key, v);
+        const on = c.platforms.includes(key);
+        const chip = grid.createEl("button", { cls: `pp-settings-platform${on ? " is-on" : ""}`, attr: { type: "button", "aria-pressed": String(on), "data-platform": key } });
+        svgIcon(chip, key, 14);
+        chip.createSpan({ text: platformLabel(key, c.site) });
+        chip.addEventListener("click", async () => {
+          const next = !c.platforms.includes(key);
+          c.platforms = nextList(c.platforms, key, next);
+          chip.toggleClass("is-on", next);
+          chip.setAttr("aria-pressed", String(next));
           await save();
-          this.display(); // the publishing fields below follow the platforms
-        }));
+        });
       }
-      plat.setDesc(PLATFORM_KEYS.map((k) => PLATFORMS[k].name).join(", "));
-      this.accounts(box, c, save);
+      const prof = new Setting(box).setName("Zernio profile").setDesc("Where this channel's posts go in Zernio.");
+      if (s.zernio.profiles.length) {
+        prof.addDropdown((d) => {
+          d.addOption("", "None");
+          for (const x of s.zernio.profiles) d.addOption(x.id, x.name);
+          if (c.zernioProfile && !s.zernio.profiles.some((x) => x.id === c.zernioProfile)) d.addOption(c.zernioProfile, `Profile ${c.zernioProfile}`);
+          d.setValue(c.zernioProfile).onChange(async (v) => { c.zernioProfile = v; await save(); });
+        });
+      } else {
+        prof.setDesc("Load the profiles above first, or paste the profile's id.").addText((t) => t.setPlaceholder("Profile id").setValue(c.zernioProfile).onChange(async (v) => { c.zernioProfile = v.trim(); await save(); }));
+      }
     });
     new Setting(el).addButton((b) => b.setButtonText("Add a channel").onClick(async () => {
       s.channels.push(cleanChannel({ name: `Channel ${s.channels.length + 1}`, folder: `Channel ${s.channels.length + 1}` }));
@@ -944,51 +893,12 @@ class PostPickerSettingTab extends PluginSettingTab {
       this.display();
     }));
   }
-
-  // Publishing details for one channel, shown only for the platforms it has that can publish.
-  accounts(box, c, save) {
-    const a = c.accounts = cleanAccounts(c.accounts);
-    const field = (name, desc, o, k, placeholder, secret) => new Setting(box).setName(name).setDesc(desc).addText((t) => {
-      if (secret && t.inputEl) t.inputEl.type = "password";
-      t.setPlaceholder(placeholder).setValue(o[k]).onChange(async (v) => { o[k] = v.trim(); await save(); });
-    });
-    if (c.platforms.includes("bluesky")) {
-      field("Bluesky handle", "Optional, to publish. Such as name.bsky.social.", a.bluesky, "handle", "name.bsky.social");
-      field("Bluesky app password", "Make one in Bluesky under Settings, Privacy and security, App passwords.", a.bluesky, "password", "xxxx-xxxx-xxxx-xxxx", true);
-      field("Bluesky server", "Leave as is unless your account is on another server.", a.bluesky, "service", "https://bsky.social");
-    }
-    if (c.platforms.includes("mastodon")) {
-      field("Mastodon server", "Optional, to publish. Such as mastodon.social.", a.mastodon, "instance", "mastodon.social");
-      field("Mastodon access token", "In Mastodon: Preferences, Development, New application, with only the write:statuses scope. Copy its access token.", a.mastodon, "token", "", true);
-      new Setting(box).setName("Mastodon visibility").addDropdown((d) => {
-        for (const v of MASTODON_VISIBILITY) d.addOption(v, { public: "Public", unlisted: "Quiet public (unlisted)", private: "Followers only" }[v]);
-        d.setValue(a.mastodon.visibility).onChange(async (v) => { a.mastodon.visibility = v; await save(); });
-      });
-      new Setting(box).setName("Mastodon character limit").setDesc("500 on most servers.").addText((t) => t.setValue(String(a.mastodon.limit)).onChange(async (v) => {
-        const n = Math.floor(Number(v));
-        a.mastodon.limit = n > 0 ? n : 500;
-        await save();
-      }));
-    }
-    if (c.platforms.includes("site")) {
-      new Setting(box).setName("Website publishing").setDesc("Optional. Sends the post to your blog as a draft.").addDropdown((d) => {
-        d.addOption("", "Off").addOption("ghost", "Ghost").addOption("wordpress", "WordPress");
-        d.setValue(a.site.kind).onChange(async (v) => { a.site.kind = v; await save(); this.display(); });
-      });
-      if (a.site.kind) field("Site address", "Such as https://example.com.", a.site, "url", "https://example.com");
-      if (a.site.kind === "ghost") field("Ghost Admin API key", "In Ghost: Settings, Integrations, Add custom integration. Copy the Admin API key (id:secret).", a.site, "key", "", true);
-      if (a.site.kind === "wordpress") {
-        field("WordPress username", "", a.site, "user", "");
-        field("WordPress application password", "In WordPress: Users, Profile, Application passwords.", a.site, "password", "", true);
-      }
-    }
-  }
 }
 
 module.exports = PostPicker;
 module.exports.core = {
-  DEFAULT_SETTINGS, PLATFORMS, PLATFORM_KEYS, HEADER_CLS, DESTINATIONS, mergeSettings, cleanChannel, cleanAccounts, headerData, summary, platformLabel,
-  nextList, movedPath, channelByFolder, channelByName, isPost, freeName, safeName, yamlValue, drawHeader, placeFor, iconPath, propKey, asList,
-  readyDestinations, sectionText, plainText, graphemes, mastodonLength, blueskyFacets, markdownToHtml, blogParts, serverUrl,
-  ghostToken, postBluesky, postMastodon, postGhost, postWordPress, preparePost, hashKey, stripFrontmatter,
+  DEFAULT_SETTINGS, PLATFORMS, PLATFORM_KEYS, HEADER_CLS, ZERNIO, ZERNIO_PLATFORM, LIMITS, SEND_MODES, mergeSettings, cleanChannel, headerData, summary,
+  platformLabel, nextList, movedPath, channelByFolder, channelByName, isPost, freeName, safeName, yamlValue, drawHeader, placeFor, iconPath, propKey,
+  asList, sectionText, sectionsFor, plainText, graphemes, stripFrontmatter, zernioReady, sendable, zernioProfiles, zernioAccounts, stableId, preparePost,
+  scheduleTime, sendToZernio, nextHour, ZernioModal, PostPickerSettingTab,
 };

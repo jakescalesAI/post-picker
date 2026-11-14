@@ -123,6 +123,7 @@ class Setting {
   addDropdown(cb) { return this._add("dropdown", cb); }
   addButton(cb) { return this._add("button", cb); }
   addExtraButton(cb) { return this._add("extra", cb); }
+  addComponent(cb) { const c = cb(this.el); this.comps.push(c); return this; }
 }
 // A note view with Live Preview (.cm-sizer, properties a direct child) and Reading view
 // (.markdown-preview-sizer, properties inside .mod-header), like the app draws them.
@@ -143,7 +144,9 @@ class MarkdownView extends Component {
   getState() { return { mode: this.mode, source: this.source }; }
 }
 
-const stub = { Plugin, Modal, Notice, PluginSettingTab, Setting, TFile, TFolder, TAbstractFile, MarkdownView, Component, normalizePath, requestUrl };
+// The keychain picker in settings: records what it was given.
+class SecretComponent { constructor(app, el) { this.app = app; this.el = el; } setValue(v) { this.value = v; return this; } onChange(fn) { this.change = fn; return this; } }
+const stub = { Plugin, Modal, Notice, PluginSettingTab, Setting, TFile, TFolder, TAbstractFile, MarkdownView, Component, normalizePath, requestUrl, SecretComponent };
 const origLoad = Module._load;
 Module._load = function (request, ...rest) { return request === "obsidian" ? stub : origLoad.call(this, request, ...rest); };
 const momentFmt = { "YYYY-MM-DD HHmm [post]": "2026-11-13 1530 post", "YYYY-MM-DDTHH:mm": "2026-11-13T15:30", "HH:mm [post]": "15:30 post" };
@@ -192,6 +195,8 @@ function makeApp(seed) {
   for (const [p, v] of Object.entries(seed || {})) put(p, v.fm, v.body);
   const app = {
     byPath, fire, writes: [], created: [],
+    // The device keychain (Settings, Keychain): ids to secrets.
+    secretStorage: { secrets: {}, setSecret(id, v) { this.secrets[id] = v; }, getSecret(id) { return Object.prototype.hasOwnProperty.call(this.secrets, id) ? this.secrets[id] : null; }, listSecrets() { return Object.keys(this.secrets); } },
     vault: {
       getAbstractFileByPath: (p) => byPath.get(p) || null,
       async createFolder(p) { if (byPath.has(p)) throw new Error("Folder already exists."); const parent = p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : ""; if (parent && !byPath.has(parent)) throw new Error("no parent " + parent); byPath.set(p, new TFolder(p)); },
@@ -406,206 +411,218 @@ const R = "Writing/Posts";
     check("unload removes the bars", bars(v).length === 0);
   });
 
-  /* ---------- publishing ---------- */
-  // Made-up account details, only for these tests. None of them is real.
-  const ACCOUNTS = {
-    bluesky: { handle: "@garden.example", password: "test-app-pass", service: "https://pds.example" },
-    mastodon: { instance: "social.example/", token: "test-token", visibility: "unlisted", limit: 60 },
-    site: { kind: "ghost", url: "https://blog.example/", key: "0123456789abcdef01234567:" + "ab".repeat(32) },
-  };
+  /* ---------- sending through Zernio ---------- */
+  // A made-up key and ids, only for these tests. None of them is real.
+  const KEY = "sk_" + "0".repeat(64);
   const PUB = {
     ...SETUP,
+    zernio: { keyName: "zernio-test", profiles: [{ id: "prof-garden", name: "Garden profile" }, { id: "prof-studio", name: "Studio profile" }] },
     channels: [
-      { ...SETUP.channels[0], platforms: ["site", "bluesky", "mastodon", "x"], accounts: ACCOUNTS },
-      { ...SETUP.channels[1], platforms: ["site", "bluesky"], accounts: { site: { kind: "wordpress", url: "wp.example", user: "editor", password: "abcd EFGH 1234 ijkl" } } },
+      { ...SETUP.channels[0], platforms: ["site", "bluesky", "x", "threads"], zernioProfile: "prof-garden" },
+      { ...SETUP.channels[1], platforms: ["site", "bluesky", "linkedin"], zernioProfile: "" },
     ],
   };
+  const ACCOUNTS = { accounts: [
+    { _id: "acc-x", platform: "twitter", username: "garden", profileId: "prof-garden", isActive: true },
+    { _id: "acc-bs", platform: "bluesky", username: "garden.example", profileId: "prof-garden", isActive: true },
+    { _id: "acc-th", platform: "threads", username: "garden", profileId: "prof-garden", isActive: true },
+    { _id: "acc-old", platform: "linkedin", username: "old", profileId: "prof-garden", isActive: false },
+  ] };
+  // The pretend Zernio: accounts and posts, and anything else is a 404.
+  const zernioReplies = (post) => (o) => {
+    if (o.url.startsWith(`${core.ZERNIO}/accounts?profileId=prof-garden`)) return { status: 200, json: ACCOUNTS };
+    if (o.url === `${core.ZERNIO}/profiles?limit=1000`) return { status: 200, json: { profiles: [{ _id: "prof-garden", name: "Garden profile" }, { _id: "prof-new", name: "New one" }] } };
+    if (o.url === `${core.ZERNIO}/posts` && o.method === "POST") return post(JSON.parse(o.body));
+    return { status: 404, json: { error: "not here" } };
+  };
+  const withKey = async (seed, data) => { const r = await newPlugin(seed, data); r.app.secretStorage.setSecret("zernio-test", KEY); return r; };
   const lastModal = () => modals[modals.length - 1];
   const buttonIn = (m, which) => m.contentEl.byAttr("data-confirm", which)[0];
+  const modeIn = (m, mode) => m.contentEl.byAttr("data-mode", mode)[0];
 
   await test("the text that is sent", async () => {
-    const note = "---\nchannel: Garden\n---\nShared opening.\n\n## Bluesky\nShort one for **Bluesky**.\n\n## Mastodon\nLonger one.\n\n## Website\nThe blog.\n";
-    check("a platform's own section", core.sectionText(note, ["bluesky"]) === "Short one for **Bluesky**.");
-    check("without one: the note minus every platform section", core.sectionText(note, ["threads-nothing"]) === "Shared opening.");
-    check("front matter is never sent", !/channel/.test(core.sectionText(note, ["x"])));
+    const note = "---\nchannel: Garden\n---\nShared opening.\n\n## Bluesky\nShort one for **Bluesky**.\n\n## X\nFor X.\n\n## Website\nThe blog.\n";
+    check("a platform's own section", core.sectionText(note, core.sectionsFor("bluesky")) === "Short one for **Bluesky**.");
+    check("X's section is found by its name", core.sectionText(note, core.sectionsFor("x")) === "For X.");
+    check("without one: the note minus every platform section", core.sectionText(note, core.sectionsFor("threads")) === "Shared opening.");
+    check("front matter is never sent", !/channel/.test(core.sectionText(note, core.sectionsFor("threads"))));
     check("plain text: links keep their address, marks and wikilinks go", core.plainText("# Hi\nSee [my site](https://a.example/x) and [[Notes/Idea|this idea]] or [[Plan#Step]]. **Bold** ==hi== %%secret%%![[pic.png]]")
-      === "Hi\nSee my site (https://a.example/x) and this idea or Plan. Bold hi", core.plainText("# Hi\nSee [my site](https://a.example/x) and [[Notes/Idea|this idea]] or [[Plan#Step]]. **Bold** ==hi== %%secret%%![[pic.png]]"));
-    check("a family emoji is one grapheme", core.graphemes("hi 👨‍👩‍👧") === 4);
-    check("Mastodon counts a link as 23", core.mastodonLength("go https://example.com/a/very/long/path/that/goes/on.") === 3 + 23 + 1);
-    const text = "Café: https://ex.example/a_(b). #tag2 and #123 not";
-    const f = core.blueskyFacets(text);
-    const enc = new TextEncoder();
-    const cut = (x) => Buffer.from(enc.encode(text).slice(x.index.byteStart, x.index.byteEnd)).toString("utf8");
-    check("Bluesky link facet by UTF-8 bytes, without the full stop", f[0].features[0].uri === "https://ex.example/a_(b)" && cut(f[0]) === "https://ex.example/a_(b)" && f[0].index.byteStart === 7, f[0]);
-    check("Bluesky tag facet, not for a number", f.length === 2 && f[1].features[0].tag === "tag2" && cut(f[1]) === "#tag2", f);
-    const html = core.markdownToHtml("## Hello <you>\n\nA [link](https://a.example/?q=1&r=2) and [bad](javascript:alert) and *it*.\nNext line `<b>`\n\n- one\n- **two**\n\n1. first\n\n> quote\n\n```\n<script>x</script>\n```\n\n![p](https://img.example/p.png)\n---");
-    check("HTML: headings, links, escaping", /<h2>Hello &lt;you&gt;<\/h2>/.test(html) && /<a href="https:\/\/a.example\/\?q=1&amp;r=2">link<\/a>/.test(html) && /and bad and <em>it<\/em>\.<br>Next line <code>&lt;b&gt;<\/code>/.test(html), html);
-    check("HTML: lists, quotes, code, images, rules", /<ul><li>one<\/li><li><strong>two<\/strong><\/li><\/ul>/.test(html) && /<ol><li>first<\/li><\/ol>/.test(html) && /<blockquote><p>quote<\/p><\/blockquote>/.test(html)
-      && /<pre><code>&lt;script&gt;x&lt;\/script&gt;<\/code><\/pre>/.test(html) && /<img src="https:\/\/img.example\/p.png" alt="p">/.test(html) && /<hr>$/.test(html), html);
-    check("no script or javascript: gets through", !/<script|javascript:/i.test(html));
-    check("blog title from the first heading, taken out of the body", eq(core.blogParts({}, "# Big title\nThe blog.", "file"), { title: "Big title", html: "<p>The blog.</p>" }));
-    check("blog title from the title property, else the file name", core.blogParts({ Title: "Prop" }, "# H\nx", "f").title === "Prop" && core.blogParts({}, "Just text", "File name").title === "File name");
-    check("server addresses: https added, http refused", core.serverUrl("social.example/", "x") === "https://social.example" && core.serverUrl("http://localhost:2368", "x") === "http://localhost:2368" && (() => { try { core.serverUrl("http://blog.example", "x"); return false; } catch (e) { return /https/.test(e.message); } })());
-    check("the same note and text give the same Mastodon key", core.hashKey("a\nb") === core.hashKey("a\nb") && core.hashKey("a") !== core.hashKey("b"));
+      === "Hi\nSee my site (https://a.example/x) and this idea or Plan. Bold hi");
+    check("a family emoji is one character", core.graphemes("hi 👨‍👩‍👧") === 4);
+    check("Zernio's platform names", core.ZERNIO_PLATFORM.x === "twitter" && core.ZERNIO_PLATFORM.bluesky === "bluesky" && !core.ZERNIO_PLATFORM.site);
+    const id = core.stableId("a\nb");
+    check("a steady UUID-shaped key per note and text", id === core.stableId("a\nb") && id !== core.stableId("a\nc") && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id), id);
+    const now = new Date(2026, 10, 13, 15, 30).getTime();
+    check("a schedule time must be real and in the future", core.scheduleTime("2026-11-14T09:05", now) === "2026-11-14T09:05:00" && core.scheduleTime("2026-11-13T15:00", now) === "" && core.scheduleTime("soon", now) === "");
+    check("the time box starts an hour on, on the hour", core.nextHour(now) === "2026-11-13T16:00");
   });
 
-  await test("publish buttons on the bar", async () => {
+  await test("settings for Zernio", async () => {
     const s = core.mergeSettings(PUB);
-    check("account details are kept and cleaned", s.channels[0].accounts.bluesky.handle === "garden.example" && s.channels[0].accounts.mastodon.limit === 60 && s.channels[1].accounts.site.kind === "wordpress" && s.channels[1].accounts.bluesky.service === "https://bsky.social");
-    check("no details: nothing to publish to", eq(core.readyDestinations(core.mergeSettings(SETUP).channels[0]), []));
-    check("ready places for a channel", eq(core.readyDestinations(s.channels[0]), ["bluesky", "mastodon", "ghost"]) && eq(core.readyDestinations(s.channels[1]), ["wordpress"]));
-    const d = core.headerData(s, { path: `${R}/0 Garden/a.md` }, { channel: "Garden", platforms: ["bluesky", "x"], bluesky_url: "https://bsky.app/profile/x/post/1", bluesky_date: "2026-11-01T10:00" });
-    check("only the picked ones show, with what was posted", eq(d.publish.map((p) => p.key), ["bluesky"]) && d.publish[0].url === "https://bsky.app/profile/x/post/1");
-    check("no secret in the bar's data", !/test-app-pass|test-token|abab/.test(JSON.stringify(d)));
-    const { app } = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky", "mastodon", "site"] }, body: "Hi" } }, PUB);
+    check("the key's keychain name and the profiles are kept", s.zernio.keyName === "zernio-test" && s.zernio.profiles.length === 2 && s.channels[0].zernioProfile === "prof-garden");
+    const old = core.mergeSettings({ ...SETUP, channels: [{ ...SETUP.channels[0], accounts: { bluesky: { handle: "a", password: "old-secret" } } }] });
+    check("old per-channel passwords are dropped, never kept", !/old-secret/.test(JSON.stringify(old)) && old.channels[0].accounts === undefined);
+    check("Mastodon is gone from the platforms (Zernio has no Mastodon)", !core.PLATFORM_KEYS.includes("mastodon"));
+    check("ready only with a key name and the channel's profile", core.zernioReady(s, s.channels[0]) && !core.zernioReady(s, s.channels[1]) && !core.zernioReady(core.mergeSettings(SETUP), core.mergeSettings(SETUP).channels[0]));
+    check("the website toggle is not sent", eq(core.sendable(s, s.channels[0], ["site", "bluesky", "x"]), ["x", "bluesky"]));
+  });
+
+  await test("the button on the bar", async () => {
+    const s = core.mergeSettings(PUB);
+    const d = core.headerData(s, { path: `${R}/0 Garden/a.md` }, { channel: "Garden", platforms: ["bluesky", "x"], zernio_id: "p1", zernio_status: "draft", zernio_date: "2026-11-01T10:00" });
+    check("what the bar knows: the platforms and what was sent", eq(d.publish.platforms, ["x", "bluesky"]) && d.publish.id === "p1" && d.publish.status === "draft");
+    check("no key in the bar's data", !/sk_/.test(JSON.stringify(d)));
+    check("no button where Zernio isn't set up", core.headerData(s, { path: `${R}/1 Studio/a.md` }, { channel: "Studio", platforms: ["bluesky"] }).publish === null);
+    requests.length = 0;
+    const { app } = await withKey({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky", "site"] }, body: "Hi" } }, PUB);
     const v = openNote(app, `${R}/0 Garden/a.md`, "source");
     app.fire("file-open", v.file);
     const h = v.containerEl.byClass(core.HEADER_CLS)[0];
-    check("three publish buttons", h.byClass("pp-pub").map((b) => b.text).join(" | ") === "Post to Bluesky | Post to Mastodon | Send to Ghost as a draft");
-    check("no secret anywhere in the page", !/test-app-pass|test-token|abab/.test(JSON.stringify(h.attrs) + h.textContent));
-    check("nothing sent just by showing the bar", requests.length === 0);
+    check("one Send to Zernio button", h.byClass("pp-pub").map((b) => b.text).join(" | ") === "Send to Zernio");
+    check("nothing sent just by showing the bar, and no key in the page", requests.length === 0 && !/sk_/.test(JSON.stringify(h.attrs) + h.textContent));
   });
 
-  await test("publish to Bluesky", async () => {
+  await test("send a draft to Zernio", async () => {
     requests.length = 0;
-    respond = (o) => {
-      if (o.url.endsWith("createSession")) return { status: 200, json: { accessJwt: "session-jwt", did: "did:plc:test123", handle: "garden.example" } };
-      if (o.url.endsWith("createRecord")) return { status: 200, json: { uri: "at://did:plc:test123/app.bsky.feed.post/3kpost", cid: "c" } };
-      return { status: 404, json: {} };
-    };
-    const body = "Café time. Read https://garden.example/p #slow\n\n## Mastodon\nNot for Bluesky.";
-    const { app, p } = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky"] }, body } }, PUB);
+    const posted = [];
+    respond = zernioReplies((b) => { posted.push(b); return { status: 201, json: { post: { _id: `zp-${posted.length}`, status: "draft", platforms: b.platforms.map((x) => ({ platform: x.platform, status: "pending" })) } } }; });
+    const body = "Slow gardens grow. https://garden.example/p #slow\n\n## X\nShort for X.";
+    const { app, p } = await withKey({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky", "x", "threads", "site"] }, body } }, PUB);
     const v = openNote(app, `${R}/0 Garden/a.md`, "source");
     app.fire("file-open", v.file);
-    await v.containerEl.byClass(core.HEADER_CLS)[0].byAttr("data-publish", "bluesky")[0].click();
+    await v.containerEl.byClass(core.HEADER_CLS)[0].byAttr("data-publish", "zernio")[0].click();
     let m = lastModal();
-    const shown = m.contentEl.byClass("pp-confirm-text")[0].text;
-    check("the confirm box shows the exact text", shown === "Café time. Read https://garden.example/p #slow", shown);
-    check("and where it goes", m.titleEl.text === "Post to Bluesky?" && /@garden\.example on pds\.example/.test(m.contentEl.byClass("pp-confirm-where")[0].text) && m.contentEl.byClass("pp-confirm-count")[0].text === "46 of 300 characters");
-    check("nothing is sent before Post is pressed", requests.length === 0);
+    const texts = m.contentEl.byClass("pp-confirm-text").map((e) => e.text);
+    check("the box shows each platform's exact text, grouped", eq(texts, ["Short for X.", "Slow gardens grow. https://garden.example/p #slow"]) && eq(m.p.groups.map((g) => g.platforms), [["x"], ["threads", "bluesky"]]), texts);
+    check("and where it goes", m.titleEl.text === "Send to Zernio" && /Garden profile/.test(m.contentEl.byClass("pp-confirm-where")[0].text));
+    check("draft is the default, and the button says so", modeIn(m, "draft").hasClass("is-on") && buttonIn(m, "yes").text === "Send draft");
+    check("nothing is sent before the button is pressed", requests.length === 0);
     await buttonIn(m, "no").click();
     check("Cancel sends nothing", requests.length === 0 && !m.isOpen);
-    await p.confirmPublish(v.file, "bluesky");
-    m = lastModal();
+    m = await p.confirmPublish(v.file);
     await buttonIn(m, "yes").click();
-    check("two requests: a session, then the post", requests.length === 2 && requests[0].url === "https://pds.example/xrpc/com.atproto.server.createSession" && requests[1].url === "https://pds.example/xrpc/com.atproto.repo.createRecord", requests.map((r) => r.url));
-    check("the session sends the handle and app password", requests[0].method === "POST" && eq(JSON.parse(requests[0].body), { identifier: "garden.example", password: "test-app-pass" }) && requests[0].contentType === "application/json");
-    const rec = JSON.parse(requests[1].body);
-    check("the post: the session's token, the account, the collection", requests[1].headers.Authorization === "Bearer session-jwt" && rec.repo === "did:plc:test123" && rec.collection === "app.bsky.feed.post");
-    check("the record: text, type, time and facets", rec.record.$type === "app.bsky.feed.post" && rec.record.text === shown && /^\d{4}-\d\d-\d\dT/.test(rec.record.createdAt)
-      && rec.record.facets.length === 2 && rec.record.facets[0].features[0].uri === "https://garden.example/p" && rec.record.facets[0].index.byteStart === 17 && rec.record.facets[1].features[0].tag === "slow", rec.record);
-    check("the post's address and date written into the note", v.file.fm.bluesky_url === "https://bsky.app/profile/garden.example/post/3kpost" && v.file.fm.bluesky_date === "2026-11-13T15:30", v.file.fm);
+    check("first the profile's accounts, then one post per text", requests.length === 3 && requests[0].url === `${core.ZERNIO}/accounts?profileId=prof-garden&limit=500` && requests[1].url === `${core.ZERNIO}/posts`, requests.map((r) => r.url));
+    check("every request carries the key from the keychain", requests.every((r) => r.headers.Authorization === `Bearer ${KEY}`), requests.map((r) => r.headers));
+    check("a draft: no time and not now", eq(posted[0], { content: "Short for X.", platforms: [{ platform: "twitter", accountId: "acc-x" }] }) && eq(posted[1].platforms, [{ platform: "threads", accountId: "acc-th" }, { platform: "bluesky", accountId: "acc-bs" }]) && !("publishNow" in posted[1]) && !("scheduledFor" in posted[1]), posted);
+    check("each post has a steady Idempotency-Key", /^[0-9a-f-]{36}$/.test(requests[1].headers["Idempotency-Key"]) && requests[1].headers["Idempotency-Key"] !== requests[2].headers["Idempotency-Key"]);
+    check("the Zernio posts and status written into the note", v.file.fm.zernio_id === "zp-1, zp-2" && v.file.fm.zernio_status === "draft" && v.file.fm.zernio_date === "2026-11-13T15:30", v.file.fm);
     const h = v.containerEl.byClass(core.HEADER_CLS)[0];
-    check("the bar then shows it was posted", h.byAttr("data-posted", "bluesky")[0].attrs.href === v.file.fm.bluesky_url && h.byAttr("data-publish", "bluesky")[0].text === "Post to Bluesky again");
-    await p.confirmPublish(v.file, "bluesky");
-    check("pressing again warns it is already there", /already on Bluesky/.test(lastModal().contentEl.textContent));
-    lastModal().close();
-
-    v.file.body = "x".repeat(301);
-    await p.confirmPublish(v.file, "bluesky");
-    m = lastModal();
-    check("too long: said plainly, and no Post button", /Too long: 301 of 300/.test(m.contentEl.textContent) && !buttonIn(m, "yes") && m.contentEl.byClass("pp-confirm-count")[0].hasClass("is-over"));
+    check("the bar then shows it is in Zernio", /In Zernio: draft/.test(h.byAttr("data-posted", "zernio")[0].text) && h.byAttr("data-publish", "zernio")[0].text === "Send to Zernio again");
+    m = await p.confirmPublish(v.file);
+    check("pressing again warns it is already there", /sent to Zernio before/.test(m.contentEl.textContent));
     m.close();
   });
 
-  await test("publish to Mastodon", async () => {
+  await test("schedule and publish now", async () => {
     requests.length = 0;
-    respond = () => ({ status: 200, json: { id: "1", url: "https://social.example/@garden/1", created_at: "2026-11-13T15:30:00Z" } });
-    const { app, p } = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["mastodon"] }, body: "Main text.\n\n## Mastodon\nToot with https://garden.example/a-really-long-address-here" } }, PUB);
+    const posted = [];
+    respond = zernioReplies((b) => { posted.push(b); return { status: 201, json: { post: { _id: "zp", status: b.publishNow ? "published" : "scheduled", platforms: [{ platform: "bluesky", status: "published", platformPostUrl: "https://bsky.app/profile/garden.example/post/3k" }] } } }; });
+    const { app, p } = await withKey({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky"] }, body: "Hello" } }, PUB);
     const f = app.byPath.get(`${R}/0 Garden/a.md`);
-    const m = await p.confirmPublish(f, "mastodon");
-    check("its own section, counted the Mastodon way", m.p.text === "Toot with https://garden.example/a-really-long-address-here" && m.p.length === 10 + 23 && /social\.example, visible: unlisted/.test(m.p.where));
-    await Promise.all([buttonIn(m, "yes").click(), p.publish(f, m.p)]);
-    check("pressed twice at once: sent once", requests.length === 1);
-    const r = requests[0];
-    check("the request", r.url === "https://social.example/api/v1/statuses" && r.method === "POST" && r.headers.Authorization === "Bearer test-token" && /^pp-[0-9a-f]+$/.test(r.headers["Idempotency-Key"])
-      && eq(JSON.parse(r.body), { status: m.p.text, visibility: "unlisted" }), r);
-    check("the address written into the note", f.fm.mastodon_url === "https://social.example/@garden/1" && f.fm.mastodon_date === "2026-11-13T15:30");
+    let m = await p.confirmPublish(f);
+    await modeIn(m, "schedule").click();
+    check("schedule shows the time box and its button", !m.contentEl.byClass("pp-when")[0].hasClass("pp-hidden") && buttonIn(m, "yes").text === "Schedule");
+    m.when = "2099-01-02T09:30";
+    await buttonIn(m, "yes").click();
+    check("a scheduled post: the time and this device's time zone", posted[0].scheduledFor === "2099-01-02T09:30:00" && typeof posted[0].timezone === "string" && posted[0].timezone.length > 0 && !posted[0].publishNow, posted[0]);
+    check("the schedule written into the note", f.fm.zernio_status === "scheduled" && f.fm.zernio_scheduled === "2099-01-02T09:30");
+    m = await p.confirmPublish(f);
+    await modeIn(m, "schedule").click();
+    m.when = "2001-01-01T09:00";
+    const before = posted.length;
+    await buttonIn(m, "yes").click();
+    check("a time in the past is refused before sending", posted.length === before && /future/.test(notices[notices.length - 1]));
+    m = await p.confirmPublish(f);
+    await modeIn(m, "now").click();
+    check("publish now says it plainly", buttonIn(m, "yes").text === "Publish now" && /as soon as you press/.test(m.contentEl.textContent));
+    await buttonIn(m, "yes").click();
+    check("publish now", posted[posted.length - 1].publishNow === true && !posted[posted.length - 1].scheduledFor);
+    check("a published link is written into the note", f.fm.bluesky_url === "https://bsky.app/profile/garden.example/post/3k" && f.fm.zernio_status === "published");
+    const twice = await p.confirmPublish(f);
+    const n = requests.length;
+    await Promise.all([p.publish(f, twice.p, "draft", ""), p.publish(f, twice.p, "draft", "")]);
+    check("pressed twice at once: sent once", requests.length === n + 2); // one accounts call, one post
+    twice.close();
+  });
 
+  await test("refused before or by Zernio", async () => {
     requests.length = 0;
-    respond = () => ({ status: 401, json: { error: "The access token is invalid" } });
-    const before = JSON.stringify(f.fm);
-    await p.publish(f, m.p);
-    check("a refusal is shown and the note is left alone", /Not published: Mastodon said no \(401\): The access token is invalid/.test(notices[notices.length - 1]) && JSON.stringify(f.fm) === before, notices[notices.length - 1]);
+    respond = zernioReplies(() => ({ status: 201, json: { post: { _id: "x" } } }));
+    const { app, p } = await withKey({
+      [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky"] }, body: "  " },
+      [`${R}/0 Garden/b.md`]: { fm: { channel: "Garden", platforms: ["x"] }, body: "x".repeat(281) },
+      [`${R}/0 Garden/c.md`]: { fm: { channel: "Garden", platforms: ["site"] }, body: "Blog only" },
+    }, PUB);
+    let m = await p.confirmPublish(app.byPath.get(`${R}/0 Garden/a.md`));
+    check("an empty post has no send button", m && !buttonIn(m, "yes") && /empty/.test(m.contentEl.textContent));
+    m.close();
+    m = await p.confirmPublish(app.byPath.get(`${R}/0 Garden/b.md`));
+    check("too long for X: said plainly, and no send button", /Too long for X: 281 of 280/.test(m.contentEl.textContent) && !buttonIn(m, "yes") && m.contentEl.byClass("pp-confirm-count")[0].hasClass("is-over"));
+    m.close();
+    check("only the website picked: a notice, no box", (await p.confirmPublish(app.byPath.get(`${R}/0 Garden/c.md`))) === null && /website toggle is not sent/.test(notices[notices.length - 1]));
+    check("nothing was sent for any of these", requests.length === 0);
+
+    const noKey = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky"] }, body: "Hi" } }, PUB);
+    const f = noKey.app.byPath.get(`${R}/0 Garden/a.md`);
+    m = await noKey.p.confirmPublish(f);
+    await buttonIn(m, "yes").click();
+    check("the key missing from this device's keychain: said plainly, nothing sent", requests.length === 0 && /keychain/.test(notices[notices.length - 1]), notices[notices.length - 1]);
+
+    const lin = await withKey({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky"] }, body: "Hi" } }, { ...PUB, channels: [{ ...PUB.channels[0], platforms: ["bluesky", "linkedin"] }] });
+    const lf = lin.app.byPath.get(`${R}/0 Garden/a.md`);
+    lf.fm.platforms = ["bluesky", "linkedin"];
+    requests.length = 0;
+    m = await lin.p.confirmPublish(lf);
+    await buttonIn(m, "yes").click();
+    check("a platform with no active account in the profile: named, and no post sent", requests.length === 1 && /no LinkedIn account/.test(notices[notices.length - 1]), notices[notices.length - 1]);
+
+    respond = () => ({ status: 401, json: { error: "Invalid API key" } });
+    const before = JSON.stringify(lf.fm);
+    lf.fm.platforms = ["bluesky"];
+    m = await lin.p.confirmPublish(lf);
+    await buttonIn(m, "yes").click();
+    check("a refused key is shown, and the note is left alone", /refused the API key \(401\)/.test(notices[notices.length - 1]) && !lf.fm.zernio_id, notices[notices.length - 1]);
     respond = () => { throw new Error("offline"); };
-    await p.publish(f, m.p);
+    m = await lin.p.confirmPublish(lf);
+    await buttonIn(m, "yes").click();
     check("no connection is shown too", /could not be reached: offline/.test(notices[notices.length - 1]));
-  });
+    void before;
 
-  await test("send to Ghost", async () => {
-    requests.length = 0;
-    respond = () => ({ status: 201, json: { posts: [{ id: "abc", url: "https://blog.example/p/1234/", status: "draft" }] } });
-    const { app, p } = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["site"] }, body: "# Slow gardens\nThey **grow**.\n\n## Bluesky\nskip me" } }, PUB);
-    const f = app.byPath.get(`${R}/0 Garden/a.md`);
-    const m = await p.confirmPublish(f, "ghost");
-    check("the box shows the title, the HTML and that it is a draft", /Title: Slow gardens/.test(m.contentEl.textContent) && m.contentEl.byClass("pp-confirm-text")[0].text === "<p>They <strong>grow</strong>.</p>" && /blog\.example as a draft/.test(m.p.where) && buttonIn(m, "yes").text === "Send draft");
-    const t0 = Date.now();
-    await buttonIn(m, "yes").click();
-    const r = requests[0];
-    check("the request", requests.length === 1 && r.url === "https://blog.example/ghost/api/admin/posts/?source=html" && r.headers["Accept-Version"] === "v5.0" && /^Ghost [\w-]+\.[\w-]+\.[\w-]+$/.test(r.headers.Authorization), r);
-    check("the body: a draft from HTML", eq(JSON.parse(r.body), { posts: [{ title: "Slow gardens", html: "<p>They <strong>grow</strong>.</p>", status: "draft" }] }));
-    const [h64, p64, sig] = r.headers.Authorization.slice(6).split(".");
-    const head = JSON.parse(Buffer.from(h64, "base64url").toString());
-    const claims = JSON.parse(Buffer.from(p64, "base64url").toString());
-    check("JWT header: HS256 with the key id", eq(head, { alg: "HS256", typ: "JWT", kid: "0123456789abcdef01234567" }), head);
-    check("JWT claims: admin audience, five minutes", claims.aud === "/admin/" && claims.exp - claims.iat === 300 && Math.abs(claims.iat - Math.floor(t0 / 1000)) < 5, claims);
-    const want = nodeCrypto.createHmac("sha256", Buffer.from("ab".repeat(32), "hex")).update(`${h64}.${p64}`).digest("base64url");
-    check("JWT signed with the secret's bytes", sig === want);
-    check("the draft's address written into the note", f.fm.ghost_url === "https://blog.example/p/1234/" && f.fm.ghost_date === "2026-11-13T15:30");
-    let err = "";
-    try { await core.ghostToken("not-a-key", Date.now()); } catch (e) { err = e.message; }
-    check("a key that is not id:secret is refused before sending", /id:secret/.test(err));
-  });
-
-  await test("send to WordPress", async () => {
-    requests.length = 0;
-    respond = () => ({ status: 201, json: { id: 42, link: "https://wp.example/?p=42", status: "draft" } });
-    const { app, p } = await newPlugin({ [`${R}/1 Studio/a.md`]: { fm: { channel: "Studio", platforms: ["site"], title: "Studio notes" }, body: "Hello <there>" } }, PUB);
-    const f = app.byPath.get(`${R}/1 Studio/a.md`);
-    const m = await p.confirmPublish(f, "wordpress");
-    await buttonIn(m, "yes").click();
-    const r = requests[0];
-    check("the request, with the application password (spaces taken out)", r && r.url === "https://wp.example/wp-json/wp/v2/posts" && Buffer.from(r.headers.Authorization.replace(/^Basic /, ""), "base64").toString() === "editor:abcdEFGH1234ijkl", r);
-    check("the body: a draft", eq(JSON.parse(r.body), { title: "Studio notes", content: "<p>Hello &lt;there&gt;</p>", status: "draft" }));
-    check("the address written into the note", f.fm.wordpress_url === "https://wp.example/?p=42");
-  });
-
-  await test("publish: refused before sending", async () => {
-    requests.length = 0;
-    const plainHttp = { ...PUB, channels: [{ ...PUB.channels[0], accounts: { ...ACCOUNTS, mastodon: { instance: "http://social.example", token: "t" } } }] };
-    const { app, p } = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["mastodon"] }, body: "Hi" }, [`${R}/0 Garden/b.md`]: { fm: { channel: "Garden" }, body: "" } }, plainHttp);
-    const f = app.byPath.get(`${R}/0 Garden/a.md`);
-    check("plain http: no box, a notice, nothing sent", (await p.confirmPublish(f, "mastodon")) === null && /https/.test(notices[notices.length - 1]) && requests.length === 0);
-    const none = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky"] }, body: "Hi" } }, SETUP);
-    check("no account details: a notice", (await none.p.confirmPublish(none.app.byPath.get(`${R}/0 Garden/a.md`), "bluesky")) === null && /details/.test(notices[notices.length - 1]));
-    const empty = await newPlugin({ [`${R}/0 Garden/a.md`]: { fm: { channel: "Garden", platforms: ["bluesky"] }, body: "  " } }, PUB);
-    const m = await empty.p.confirmPublish(empty.app.byPath.get(`${R}/0 Garden/a.md`), "bluesky");
-    check("an empty post has no Post button", m && !buttonIn(m, "yes") && /empty/.test(m.contentEl.textContent));
-    m.close();
-    const cmd = empty.p.commands.find((c) => c.id === "publish");
-    empty.app.workspace.active = empty.app.byPath.get(`${R}/0 Garden/a.md`);
-    check("the publish command shows on a post with somewhere to go", cmd.checkCallback(true) === true);
-    cmd.checkCallback(false);
-    check("and opens a chooser, not a send", lastModal().contentEl.byAttr("data-publish", "bluesky").length === 1 && requests.length === 0);
-    empty.app.workspace.active = null;
+    const cmd = lin.p.commands.find((c) => c.id === "send-to-zernio");
+    lin.app.workspace.active = lf;
+    check("the command shows on a post that can go to Zernio", cmd.checkCallback(true) === true);
+    lin.app.workspace.active = null;
     check("not on other notes", cmd.checkCallback(true) === false);
   });
 
   await test("settings tab", async () => {
-    const { p } = await newPlugin({}, PUB);
+    requests.length = 0;
+    respond = zernioReplies(() => ({ status: 201, json: {} }));
+    const { p, app } = await withKey({}, PUB);
     const tab = p.tabs[0];
     settingsMade.length = 0;
     tab.display();
     const first = tab.containerEl.children[0];
     check("no heading at the very top", first && !settingsMade.some((x) => x.el === first && x.heading));
-    const secret = settingsMade.filter((x) => /password|token|API key/i.test(x.name));
-    check("passwords, tokens and keys are hidden as you type", secret.length >= 3 && secret.every((x) => x.comps[0].inputEl.type === "password"), secret.map((x) => x.name));
-    check("it says where the details are kept", /data\.json/.test(tab.containerEl.textContent) && /app passwords/i.test(tab.containerEl.textContent));
-    const names = settingsMade.map((x) => x.name);
-    check("the right fields per channel", names.includes("Bluesky handle") && names.includes("Mastodon access token") && names.includes("Ghost Admin API key") && names.includes("WordPress application password"));
-    const handle = settingsMade.find((x) => x.name === "Bluesky handle");
-    await handle.comps[0].change(" new.example ");
-    check("a change is saved", p._data.channels[0].accounts.bluesky.handle === "new.example");
+    const keyRow = settingsMade.find((x) => x.name === "Zernio API key");
+    check("the key is picked from the keychain, not typed into a field", keyRow && keyRow.comps[0] instanceof stub.SecretComponent && keyRow.comps[0].value === "zernio-test");
+    check("no password or token fields left", !settingsMade.some((x) => /password|token|handle/i.test(x.name)));
+    check("it says where the key is kept", /keychain/i.test(tab.containerEl.textContent) && /never in the plugin's files/.test(tab.containerEl.textContent));
+    await keyRow.comps[0].change("other-key");
+    check("choosing another keychain entry saves its name only", p._data.zernio.keyName === "other-key" && !/sk_/.test(JSON.stringify(p._data)));
+    const chips = tab.containerEl.byClass("pp-settings-platform");
+    check("platforms are labelled chips, one per platform per channel", chips.length === core.PLATFORM_KEYS.length * 2 && chips.some((c) => /Bluesky/.test(c.textContent)));
+    const th = tab.containerEl.byClass("pp-settings-platforms")[0].byAttr("data-platform", "threads")[0];
+    const wasOn = th.hasClass("is-on");
+    await th.click();
+    check("tapping a chip turns it on or off and saves", th.hasClass("is-on") === !wasOn && p._data.channels[0].platforms.includes("threads") === !wasOn);
+    const prof = settingsMade.filter((x) => x.name === "Zernio profile");
+    check("each channel picks a loaded profile", prof.length === 2 && prof[0].comps[0].kind === "dropdown" && prof[0].comps[0].options.some((o) => o[1] === "Garden profile"));
+    p.settings.zernio.keyName = "zernio-test";
+    const load = settingsMade.find((x) => x.name === "Profiles");
+    await load.comps[0].click();
+    check("Check key loads the profiles from Zernio", requests.some((r) => r.url === `${core.ZERNIO}/profiles?limit=1000`) && p._data.zernio.profiles.map((x) => x.name).join(",") === "Garden profile,New one");
+    void app;
   });
 
   await test("release files", async () => {
@@ -626,8 +643,8 @@ const R = "Writing/Posts";
     const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
     const order = ["## Features", "## How to use", "## Importing", "## Settings", "## Note format", "## Network use", "## Privacy", "## Mobile support", "## Tests", "## Licence"];
     check("README has its sections in order", order.every((h, i) => readme.indexOf(h) > (i ? readme.indexOf(order[i - 1]) : 0)), order.filter((h) => readme.indexOf(h) < 0));
-    check("README names every host it contacts", ["bsky.social", "/xrpc/com.atproto.server.createSession", "/api/v1/statuses", "/ghost/api/admin/posts/", "/wp-json/wp/v2/posts"].every((h) => readme.includes(h)));
-    check("README says plainly where credentials live", /data\.json/.test(readme) && /app password/i.test(readme));
+    check("README names every address it contacts", ["zernio.com/api/v1", "/profiles", "/accounts", "/posts"].every((h) => readme.includes(h)));
+    check("README says plainly where the key lives", /keychain/i.test(readme) && /never/i.test(readme));
     check("nothing personal in the README", !PRIVATE_RE.test(readme));
   });
 
@@ -636,7 +653,7 @@ const R = "Writing/Posts";
   if (fs.existsSync(own)) {
     await test("owner's settings still load", async () => {
       const s = core.mergeSettings(JSON.parse(fs.readFileSync(own, "utf8")));
-      check("owner's settings: folder, channels and their platforms", !!s.root && s.channels.length >= 1 && s.channels.every((c) => c.name && c.folder && c.platforms.length > 0 && c.accounts));
+      check("owner's settings: folder, channels and their platforms", !!s.root && s.channels.length >= 1 && s.channels.every((c) => c.name && c.folder && c.platforms.length > 0 && typeof c.zernioProfile === "string"));
       check("owner's settings: a post in a channel folder gets the bar", !!core.headerData(s, { path: `${s.root}/${s.channels[0].folder}/0 New/x.md` }, {}));
     });
   }

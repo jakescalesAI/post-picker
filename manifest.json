@@ -2,8 +2,8 @@
   "id": "post-picker",
   "name": "Post Picker",
   "version": "1.0.0",
-  "minAppVersion": "1.5.0",
-  "description": "Start blog and social posts with one button, pick each post's channel and platforms from a bar at the top of the note, and publish to Bluesky, Mastodon, Ghost or WordPress when you choose.",
+  "minAppVersion": "1.11.4",
+  "description": "Start blog and social posts with one button, pick each post's channel and platforms from a bar at the top of the note, and send them to Zernio as drafts, scheduled or published when you choose.",
   "author": "jakescalesAI",
   "authorUrl": "https://github.com/jakescalesAI",
   "isDesktopOnly": false
