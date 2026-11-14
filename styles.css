@@ -1,0 +1,146 @@
+/* Post Picker: the bar at the top of a post note, and its settings. */
+.pp-post-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  margin: var(--size-4-2) 0 var(--size-4-4);
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-small);
+  font-family: var(--font-interface);
+  line-height: 1.3;
+  user-select: none;
+}
+.pp-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-3);
+  flex-wrap: wrap;
+}
+.pp-label {
+  width: 4.5em;
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pp-seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  border-radius: var(--radius-m);
+  background: var(--background-modifier-hover);
+}
+.pp-post-header button.pp-chip {
+  height: auto;
+  padding: 4px 12px;
+  border: none;
+  border-radius: calc(var(--radius-m) - 2px);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+  cursor: pointer;
+}
+.pp-post-header button.pp-chip:hover { color: var(--text-normal); }
+.pp-post-header button.pp-chip.is-on {
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-shadow: var(--shadow-xs, 0 1px 2px rgba(0, 0, 0, 0.12));
+}
+.pp-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pp-post-header button.pp-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 50%;
+  background: var(--background-primary);
+  box-shadow: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.pp-post-header button.pp-icon:hover { color: var(--text-normal); border-color: var(--background-modifier-border-hover); }
+.pp-post-header button.pp-icon.is-on {
+  background: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+.pp-post-header button.pp-icon.is-missing {
+  border-style: dashed;
+  border-color: var(--text-error);
+}
+.pp-post-header button.pp-all {
+  height: 28px;
+  padding: 0 10px;
+  margin-left: 2px;
+  border-radius: var(--radius-m);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+.pp-hint, .pp-summary {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.pp-summary { padding-left: calc(4.5em + var(--size-4-3)); }
+.pp-post-header button:focus-visible { box-shadow: 0 0 0 2px var(--background-modifier-border-focus); }
+.pp-settings-channel {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: 0 var(--size-4-3);
+  margin: var(--size-4-2) 0;
+}
+@media (max-width: 480px) {
+  .pp-label { width: 100%; }
+  .pp-summary { padding-left: 0; }
+}
+
+/* Publishing: the buttons on the bar and the confirm box. */
+.pp-publish {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  flex-wrap: wrap;
+}
+.pp-post-header button.pp-pub,
+.pp-confirm button.pp-pub {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-m);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+.pp-posted {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.pp-confirm-where { color: var(--text-muted); }
+.pp-confirm-title { font-weight: var(--font-semibold); margin-bottom: var(--size-4-2); }
+.pp-confirm-label { color: var(--text-muted); font-size: var(--font-ui-smaller); }
+.pp-confirm-text {
+  max-height: 40vh;
+  overflow: auto;
+  padding: var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  font-family: var(--font-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.pp-confirm-count { color: var(--text-muted); font-size: var(--font-ui-smaller); text-align: right; }
+.pp-confirm-count.is-over, .pp-confirm-warn { color: var(--text-error); }

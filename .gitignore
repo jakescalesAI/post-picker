@@ -1,0 +1,5 @@
+data.json
+jake-settings.json
+node_modules/
+*.log
+test/private-words.json
