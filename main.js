@@ -132,13 +132,26 @@ function channelByName(s, name) {
   const want = lower(name);
   return want ? s.channels.find((c) => lower(c.name) === want) || null : null;
 }
-// A post is a note under the posts folder. With no posts folder set, every note in the vault would get the bar,
-// so then only notes in a channel's folder, or naming a channel, count.
+// A note says it is a post by having the channel or the platforms property (every post the plugin makes has both).
+function hasPostProp(s, fm) {
+  const keys = Object.keys(fm || {}).map(lower);
+  return keys.includes(lower(s.channelProp)) || keys.includes(lower(s.platformsProp));
+}
+// A channel's new-posts folder is where drafts start, so a note there is a post even before it has a property.
+function inNewFolder(s, path) {
+  const nf = cleanFolder(s.newFolder);
+  return !!nf && s.channels.some((c) => { const base = join(rootOf(s), c.folder, nf); return !!base && path.startsWith(base + "/"); });
+}
+// A post is a note in the posts folder (or, with no posts folder set, in a channel's folder) that is marked as a
+// post: it has the channel or platforms property, or it sits in a channel's new-posts folder. Other notes kept in
+// those folders, a published piece of writing with no properties say, stay plain notes and get no bar. A note
+// anywhere that names a channel is a post too when there is no posts folder.
 function isPost(s, path, fm) {
   if (!path || !/\.md$/i.test(path)) return false;
+  const marked = hasPostProp(s, fm) || inNewFolder(s, path);
   const r = rootOf(s);
-  if (r) return path.startsWith(r + "/");
-  return !!(channelByFolder(s, path) || channelByName(s, (fm || {})[propKey(fm, s.channelProp)]));
+  if (r) return path.startsWith(r + "/") && marked;
+  return !!(channelByName(s, (fm || {})[propKey(fm, s.channelProp)]) || (channelByFolder(s, path) && marked));
 }
 
 /* ---------- publishing through Zernio ----------

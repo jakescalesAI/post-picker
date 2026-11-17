@@ -40,7 +40,7 @@ Nothing to import. Post Picker works on the notes you make with it, or on any no
 
 ## Settings
 
-- **Posts folder**: each channel has its own folder in here. Default `Posts`. If you leave it empty, a note counts as a post only when it is in a channel's folder or its channel property names a channel, so the bar does not appear on every note in the vault.
+- **Posts folder**: each channel has its own folder in here. Default `Posts`. A note in it gets the bar only when it is marked as a post: it has the channel or platforms property (every post made with **New post** has both), or it sits in a channel's new posts folder, where drafts start. Other notes kept in these folders, such as a finished piece of writing with no properties, stay plain notes. If you leave the posts folder empty, a note counts as a post when it is marked like this inside a channel's folder, or when its channel property names a channel.
 - **New posts go in**: a folder inside the channel's folder for new posts. Default `0 New`. Empty: the channel's folder itself.
 - **New post name**: a date pattern ([moment.js format](https://momentjs.com/docs/#/displaying/format/)). Text in square brackets stays as written. Default `YYYY-MM-DD HHmm [post]`. Characters a file name cannot hold, such as `:` or `/`, become `-`. A name already used gets ` 2`, ` 3` and so on.
 - **Channel property** and **Platforms property**: the property names written into the note. Defaults `channel` and `platforms`. Read without regard to case.

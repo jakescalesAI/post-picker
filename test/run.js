@@ -276,7 +276,12 @@ const R = "Writing/Posts";
     const f = (p) => ({ path: p });
     const d = core.headerData(s, f(`${R}/0 Garden/0 New/a.md`), { channel: "Garden", platforms: ["x", "bluesky"] });
     check("channel and picked platforms, in order", d.channel === "Garden" && eq(d.picked, ["x", "bluesky"].sort((a, b) => core.PLATFORM_KEYS.indexOf(a) - core.PLATFORM_KEYS.indexOf(b))) && eq(d.extra, []), d);
-    check("the channel from the folder when the note does not name one", core.headerData(s, f(`${R}/1 Studio/Drafts/b.md`), {}).channel === "Studio");
+    check("the channel from the folder when the note does not name one", core.headerData(s, f(`${R}/1 Studio/0 New/b.md`), {}).channel === "Studio");
+    check("a draft with no properties in a new-posts folder is a post", !!core.headerData(s, f(`${R}/0 Garden/0 New/empty.md`), {}));
+    check("not a post: a note in the posts folder with no post properties", core.headerData(s, f(`${R}/0 Garden/2 Published/Thought.md`), {}) === null
+      && core.headerData(s, f(`${R}/0 Garden/2 Published/Thought.md`), { tags: ["writing"] }) === null);
+    check("a published note that kept its post properties still gets the bar", !!core.headerData(s, f(`${R}/0 Garden/2 Published/p.md`), { channel: "Garden", platforms: [] }));
+    check("platforms alone mark a post", !!core.headerData(s, f(`${R}/0 Garden/1 Ready/q.md`), { Platforms: ["x"] }));
     check("the channel property wins over the folder", core.headerData(s, f(`${R}/1 Studio/b.md`), { Channel: "garden" }).channel === "Garden");
     check("platforms as a comma list", eq(core.headerData(s, f(`${R}/0 Garden/c.md`), { platforms: "X, threads" }).picked, ["x", "threads"]));
     check("a platform the channel lacks shows as extra", eq(core.headerData(s, f(`${R}/0 Garden/c.md`), { platforms: ["linkedin"] }).extra, ["linkedin"]));
@@ -287,7 +292,8 @@ const R = "Writing/Posts";
       && core.summary({ channel: "Garden", picked: ["x"], available: ["x"] }) === "Everywhere Garden posts (1)" && core.summary({ channel: "Garden", picked: ["site"], available: ["site", "x"], site: "garden.example" }) === "garden.example");
     const whole = core.mergeSettings({ ...SETUP, root: "" });
     check("with no posts folder, only notes in a channel folder or naming a channel are posts", core.headerData(whole, f("Diary/today.md"), { title: "x" }) === null
-      && core.headerData(whole, f("0 Garden/a.md"), {}).channel === "Garden" && core.headerData(whole, f("Diary/a.md"), { channel: "Studio" }).channel === "Studio");
+      && core.headerData(whole, f("0 Garden/0 New/a.md"), {}).channel === "Garden" && core.headerData(whole, f("0 Garden/a.md"), { platforms: [] }).channel === "Garden"
+      && core.headerData(whole, f("0 Garden/notes.md"), {}) === null && core.headerData(whole, f("Diary/a.md"), { channel: "Studio" }).channel === "Studio");
     const nested = core.mergeSettings({ root: "P", channels: [{ name: "Outer", folder: "Blog" }, { name: "Inner", folder: "Blog/Inner" }] });
     check("the deepest channel folder wins", core.channelByFolder(nested, "P/Blog/Inner/a.md").name === "Inner");
   });
