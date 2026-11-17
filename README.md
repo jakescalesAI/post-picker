@@ -36,7 +36,7 @@ A post that is empty, or too long for a platform (X 280, Bluesky 300, Threads 50
 
 ## Importing
 
-Nothing to import. Post Picker works on the notes you make with it, or on any note you put in a channel's folder and give a \channel\ or \platforms\ property (notes in a channel's new posts folder count without one).
+Nothing to import. Post Picker works on the notes you make with it, or on any note you put in a channel's folder and give a `channel` or `platforms` property (notes in a channel's new posts folder count without one).
 
 ## Settings
 
